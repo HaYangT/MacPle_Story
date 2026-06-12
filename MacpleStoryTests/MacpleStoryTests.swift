@@ -105,21 +105,25 @@ struct MacpleStoryTests {
         let screenFrame = CGRect(x: 100, y: 50, width: 1000, height: 800)
         let panelSize = CGSize(width: 200, height: 100)
 
-        let topLeftOrigin = AlertPopupPlacement(
+        let topLeftPlacement = AlertPopupPlacement(
             normalizedX: 0,
             normalizedY: 0
-        ).popupOrigin(panelSize: panelSize, in: screenFrame)
+        )
+        let topLeftOrigin = topLeftPlacement.popupOrigin(panelSize: panelSize, in: screenFrame)
 
         #expect(topLeftOrigin.x == 100)
         #expect(topLeftOrigin.y == 750)
+        #expect(topLeftPlacement.displayText == "왼쪽 100% · 위쪽 100%")
 
-        let bottomRightOrigin = AlertPopupPlacement(
+        let bottomRightPlacement = AlertPopupPlacement(
             normalizedX: 1,
             normalizedY: 1
-        ).popupOrigin(panelSize: panelSize, in: screenFrame)
+        )
+        let bottomRightOrigin = bottomRightPlacement.popupOrigin(panelSize: panelSize, in: screenFrame)
 
         #expect(bottomRightOrigin.x == 900)
         #expect(bottomRightOrigin.y == 50)
+        #expect(bottomRightPlacement.displayText == "왼쪽 0% · 위쪽 0%")
     }
 
 }

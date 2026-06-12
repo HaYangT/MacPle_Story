@@ -2,7 +2,7 @@
 //  AlertPopupPlacement.swift
 //  MacpleStory
 //
-//  Created by Codex on 6/12/26.
+//  Created by Hayangt on 6/12/26.
 //
 
 import CoreGraphics
@@ -15,8 +15,8 @@ struct AlertPopupPlacement: Codable, Equatable {
     var normalizedY: Double
 
     var displayText: String {
-        let xPercent = Int((clampedX * 100).rounded())
-        let yPercent = Int((clampedY * 100).rounded())
+        let xPercent = Int(((1 - clampedX) * 100).rounded())
+        let yPercent = Int(((1 - clampedY) * 100).rounded())
         return "왼쪽 \(xPercent)% · 위쪽 \(yPercent)%"
     }
 

@@ -2,7 +2,7 @@
 //  SkillDetectionService.swift
 //  MacpleStory
 //
-//  Created by Codex on 6/12/26.
+//  Created by Hayangt on 6/12/26.
 //
 
 import Foundation
