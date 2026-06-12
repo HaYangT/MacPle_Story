@@ -90,7 +90,7 @@ struct MacpleStoryTests {
         let origin = placement.popupOrigin(panelSize: panelSize, in: screenFrame)
 
         #expect(origin.x == 500)
-        #expect(origin.y == 225)
+        #expect(origin.y == 575)
 
         let restoredPlacement = AlertPopupPlacement.placement(
             from: origin,
@@ -99,6 +99,27 @@ struct MacpleStoryTests {
         )
 
         #expect(restoredPlacement == placement)
+    }
+
+    @Test func alertPopupPlacementUsesTopLeftCoordinateSemantics() async throws {
+        let screenFrame = CGRect(x: 100, y: 50, width: 1000, height: 800)
+        let panelSize = CGSize(width: 200, height: 100)
+
+        let topLeftOrigin = AlertPopupPlacement(
+            normalizedX: 0,
+            normalizedY: 0
+        ).popupOrigin(panelSize: panelSize, in: screenFrame)
+
+        #expect(topLeftOrigin.x == 100)
+        #expect(topLeftOrigin.y == 750)
+
+        let bottomRightOrigin = AlertPopupPlacement(
+            normalizedX: 1,
+            normalizedY: 1
+        ).popupOrigin(panelSize: panelSize, in: screenFrame)
+
+        #expect(bottomRightOrigin.x == 900)
+        #expect(bottomRightOrigin.y == 50)
     }
 
 }

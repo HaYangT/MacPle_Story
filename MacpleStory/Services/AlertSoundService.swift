@@ -5,13 +5,13 @@
 //  Created by Codex on 6/12/26.
 //
 
-import AVFoundation
+import AppKit
 import Foundation
 
 final class AlertSoundService {
     static let supportedFileExtensions: Set<String> = ["wav", "mp3"]
 
-    private var audioPlayer: AVAudioPlayer?
+    private var sound: NSSound?
 
     func availableSounds() -> [AlertSound] {
         (bundledSounds() + userSounds())
@@ -49,13 +49,13 @@ final class AlertSoundService {
     }
 
     func play(_ alertSound: AlertSound) {
-        do {
-            audioPlayer = try AVAudioPlayer(contentsOf: alertSound.url)
-            audioPlayer?.prepareToPlay()
-            audioPlayer?.play()
-        } catch {
-            print("Failed to play alert sound: \(error)")
+        guard let sound = NSSound(contentsOf: alertSound.url, byReference: true) else {
+            print("Failed to load alert sound: \(alertSound.url.lastPathComponent)")
+            return
         }
+
+        self.sound = sound
+        sound.play()
     }
 
     func playSound(id: AlertSound.ID, from alertSounds: [AlertSound]) {

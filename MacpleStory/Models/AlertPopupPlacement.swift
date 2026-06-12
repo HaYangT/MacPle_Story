@@ -9,14 +9,14 @@ import CoreGraphics
 import Foundation
 
 struct AlertPopupPlacement: Codable, Equatable {
-    static let defaultValue = AlertPopupPlacement(normalizedX: 1, normalizedY: 1)
+    static let defaultValue = AlertPopupPlacement(normalizedX: 1, normalizedY: 0)
 
     var normalizedX: Double
     var normalizedY: Double
 
     var displayText: String {
         let xPercent = Int((clampedX * 100).rounded())
-        let yPercent = Int(((1 - clampedY) * 100).rounded())
+        let yPercent = Int((clampedY * 100).rounded())
         return "왼쪽 \(xPercent)% · 위쪽 \(yPercent)%"
     }
 
@@ -26,7 +26,7 @@ struct AlertPopupPlacement: Codable, Equatable {
 
         return CGPoint(
             x: screenFrame.minX + availableWidth * CGFloat(clampedX),
-            y: screenFrame.minY + availableHeight * CGFloat(clampedY)
+            y: screenFrame.minY + availableHeight * CGFloat(1 - clampedY)
         )
     }
 
@@ -38,9 +38,11 @@ struct AlertPopupPlacement: Codable, Equatable {
         let availableWidth = max(1, screenFrame.width - panelSize.width)
         let availableHeight = max(1, screenFrame.height - panelSize.height)
 
+        let yFromBottom = (origin.y - screenFrame.minY) / availableHeight
+
         return AlertPopupPlacement(
             normalizedX: Double((origin.x - screenFrame.minX) / availableWidth).clamped(to: 0...1),
-            normalizedY: Double((origin.y - screenFrame.minY) / availableHeight).clamped(to: 0...1)
+            normalizedY: Double(1 - yFromBottom).clamped(to: 0...1)
         )
     }
 
