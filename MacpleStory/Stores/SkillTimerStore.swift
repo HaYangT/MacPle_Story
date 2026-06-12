@@ -149,20 +149,45 @@ final class SkillTimerStore: ObservableObject {
         stopTickerIfIdle()
     }
 
-    func toggleTimer(id: SkillTimer.ID) {
+    func startTimer(id: SkillTimer.ID) {
+        var didStartTimer = false
+
         updateTimer(id: id) { timer in
+            guard !timer.isRunning else {
+                return
+            }
+
             if timer.remainingSeconds <= 0 {
                 timer.remainingSeconds = timer.cooldownSeconds
                 timer.didSendPreAlert = false
             }
 
-            timer.isRunning.toggle()
+            timer.isRunning = true
+            didStartTimer = true
         }
 
-        if skillTimers.contains(where: \.isRunning) {
+        if didStartTimer {
             startTickerIfNeeded()
+        }
+    }
+
+    func stopTimer(id: SkillTimer.ID) {
+        updateTimer(id: id) { timer in
+            timer.isRunning = false
+        }
+
+        stopTickerIfIdle()
+    }
+
+    func toggleTimer(id: SkillTimer.ID) {
+        guard let timer = skillTimers.first(where: { $0.id == id }) else {
+            return
+        }
+
+        if timer.isRunning {
+            stopTimer(id: id)
         } else {
-            stopTickerIfIdle()
+            startTimer(id: id)
         }
     }
 
@@ -174,6 +199,28 @@ final class SkillTimerStore: ObservableObject {
         }
 
         stopTickerIfIdle()
+    }
+
+    @discardableResult
+    func triggerCooldown(id: SkillTimer.ID) -> Bool {
+        var didTriggerCooldown = false
+
+        updateTimer(id: id) { timer in
+            guard !timer.isRunning else {
+                return
+            }
+
+            timer.remainingSeconds = timer.cooldownSeconds
+            timer.isRunning = true
+            timer.didSendPreAlert = false
+            didTriggerCooldown = true
+        }
+
+        if didTriggerCooldown {
+            startTickerIfNeeded()
+        }
+
+        return didTriggerCooldown
     }
 
     func tick() {
