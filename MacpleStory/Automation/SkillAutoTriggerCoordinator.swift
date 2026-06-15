@@ -15,6 +15,7 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
     @Published private(set) var isPresentingCapturePicker = false
     @Published private(set) var lastWindowRefreshMessage: String?
     @Published private(set) var lastDetectedResult: SkillDetectionResult?
+    @Published private(set) var lastDetectionDebugSnapshot: SkillDetectionDebugSnapshot?
     @Published private(set) var lastDetectedResolution: MapleStoryResolutionDetectionResult?
     @Published private(set) var lastTriggeredSkillTimerID: SkillTimer.ID?
     @Published private(set) var lastErrorMessage: String?
@@ -145,6 +146,7 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
         detectionTask = nil
         isRunning = false
         lastDetectedResult = nil
+        lastDetectionDebugSnapshot = nil
         lastDetectedResolution = nil
         lastTriggeredSkillTimerID = nil
     }
@@ -187,6 +189,7 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
             }
 
         lastDetectedResult = detectedResult
+        lastDetectionDebugSnapshot = skillDetectionService.lastDebugSnapshot
 
         guard let detectedResult, let timerStore else {
             return

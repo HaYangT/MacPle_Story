@@ -93,6 +93,13 @@ private struct AutoTriggerControlView: View {
                         .font(.caption)
                         .foregroundStyle(detailColor)
                         .lineLimit(autoTriggerCoordinator.lastErrorMessage == nil ? 1 : 2)
+
+                    if let debugText {
+                        Text(debugText)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
                 }
 
                 Spacer()
@@ -164,6 +171,14 @@ private struct AutoTriggerControlView: View {
         return autoTriggerCoordinator.isRunning
             ? "실행 중 · 규칙 \(ruleStore.rules.count)개"
             : "정지 · 규칙 \(ruleStore.rules.count)개"
+    }
+
+    private var debugText: String? {
+        guard let snapshot = autoTriggerCoordinator.lastDetectionDebugSnapshot else {
+            return nil
+        }
+
+        return "\(snapshot.message) · \(snapshot.summaryText)"
     }
 
     private var detailColor: Color {
@@ -284,6 +299,7 @@ struct ContentView_Previews: PreviewProvider {
         ContentView()
             .environmentObject(SkillTimerStore())
             .environmentObject(SkillDetectionRuleStore())
+            .environmentObject(TrackedSkillStore())
             .environmentObject(SkillAutoTriggerCoordinator())
     }
 }

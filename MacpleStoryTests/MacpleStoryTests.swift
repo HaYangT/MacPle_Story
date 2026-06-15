@@ -5,6 +5,7 @@
 //  Created by 고혜역 on 6/12/26.
 //
 
+import AppKit
 import CoreGraphics
 import Foundation
 import Testing
@@ -188,6 +189,223 @@ struct MacpleStoryTests {
         let detector = MapleStoryResolutionDetector()
 
         #expect(detector.detectResolution(pixelWidth: 1440, pixelHeight: 900) == nil)
+    }
+
+    @Test func skillDefinitionResolvesLevelBasedValues() async throws {
+        let skill = SkillDefinition(
+            id: "test-skill",
+            displayName: "테스트 스킬",
+            iconTemplate: SkillIconTemplate(
+                pngData: Data([1, 2, 3]),
+                pixelWidth: 32,
+                pixelHeight: 32
+            ),
+            maxLevel: 30,
+            cooldownSecondsByLevel: [
+                1: 90,
+                10: 80,
+                20: 60
+            ],
+            durationSecondsByLevel: [
+                1: 20,
+                20: 40
+            ]
+        )
+
+        #expect(skill.cooldownSeconds(for: 0) == 90)
+        #expect(skill.cooldownSeconds(for: 15) == 80)
+        #expect(skill.cooldownSeconds(for: 30) == 60)
+        #expect(skill.durationSeconds(for: 30) == 40)
+    }
+
+    @Test func skillTrackingRegistrationCreatesTimerAndDetectionRule() async throws {
+        let timerStore = SkillTimerStore(alertNotificationService: NoopAlertNotificationService())
+        let ruleStore = SkillDetectionRuleStore()
+        let trackedSkillStore = TrackedSkillStore()
+        let skill = SkillDefinition(
+            id: "tracked-skill",
+            displayName: "추적 스킬",
+            iconTemplate: SkillIconTemplate(
+                pngData: Data([4, 5, 6]),
+                pixelWidth: 32,
+                pixelHeight: 32
+            ),
+            maxLevel: 30,
+            cooldownSecondsByLevel: [
+                1: 45,
+                30: 30
+            ]
+        )
+
+        let trackedSkill = try #require(
+            SkillTrackingRegistrationService().register(
+                skill: skill,
+                level: 30,
+                alertBeforeSeconds: 5,
+                timerStore: timerStore,
+                ruleStore: ruleStore,
+                trackedSkillStore: trackedSkillStore
+            )
+        )
+        let timer = try #require(timerStore.skillTimers.first)
+        let rule = try #require(ruleStore.rules.first)
+
+        #expect(timer.name == "추적 스킬")
+        #expect(timer.cooldownSeconds == 30)
+        #expect(rule.skillTimerID == timer.id)
+        #expect(rule.skillDefinitionID == skill.id)
+        #expect(rule.detectionMode == .locateIcon)
+        #expect(rule.iconTemplate == skill.iconTemplate)
+        #expect(trackedSkill.skillTimerID == timer.id)
+        #expect(trackedSkill.detectionRuleID == rule.id)
+        #expect(trackedSkillStore.trackedSkills == [trackedSkill])
+    }
+
+    @Test func skillDetectionServiceEmitsOnlyReadyToCooldownTransitions() async throws {
+        let timerID = UUID()
+        let rule = SkillDetectionRule(
+            skillTimerID: timerID,
+            displayName: "전이 감지 스킬",
+            detectionMode: .fixedRegion,
+            matchThreshold: 0.8
+        )
+        let detector = SequencedCooldownStateDetector(
+            states: [
+                (.ready, 0.99),
+                (.cooldown, 0.92),
+                (.cooldown, 0.93)
+            ]
+        )
+        let service = SkillDetectionService(cooldownStateDetector: detector)
+        let firstFrameDate = Date()
+        let firstFrame = ScreenCaptureFrame(
+            image: makeTestImage(width: 1280, height: 720),
+            capturedAt: firstFrameDate
+        )
+        let secondFrame = ScreenCaptureFrame(
+            image: makeTestImage(width: 1280, height: 720),
+            capturedAt: firstFrameDate.addingTimeInterval(0.35)
+        )
+        let thirdFrame = ScreenCaptureFrame(
+            image: makeTestImage(width: 1280, height: 720),
+            capturedAt: firstFrameDate.addingTimeInterval(0.7)
+        )
+
+        let firstResults = try await service.detectSkills(
+            in: firstFrame,
+            using: [rule]
+        )
+        let secondResults = try await service.detectSkills(
+            in: secondFrame,
+            using: [rule]
+        )
+        let thirdResults = try await service.detectSkills(
+            in: thirdFrame,
+            using: [rule]
+        )
+
+        #expect(firstResults.isEmpty)
+        #expect(secondResults.count == 1)
+        #expect(secondResults.first?.ruleID == rule.id)
+        #expect(secondResults.first?.skillTimerID == timerID)
+        #expect(secondResults.first?.confidence == 0.92)
+        #expect(thirdResults.isEmpty)
+    }
+
+    @Test func iconLocatorFindsRegisteredSkillIconInFrame() async throws {
+        let iconImage = makeTestSkillIconImage(width: 32, height: 32)
+        let iconTemplate = SkillIconTemplate(
+            pngData: try #require(pngData(from: iconImage)),
+            pixelWidth: 32,
+            pixelHeight: 32
+        )
+        let frameImage = makeFrameImage(
+            width: 160,
+            height: 120,
+            iconImage: iconImage,
+            iconRect: CGRect(x: 56, y: 44, width: 32, height: 32),
+            isCooldown: false
+        )
+        let frame = ScreenCaptureFrame(
+            image: frameImage,
+            capturedAt: Date()
+        )
+
+        let location = try #require(
+            SkillIconLocator(minimumConfidence: 0.75).locateIcon(
+                matching: iconTemplate,
+                in: frame,
+                searchRegion: .fullScreen
+            )
+        )
+        let locatedRect = location.region.pixelRect(
+            pixelWidth: frameImage.width,
+            pixelHeight: frameImage.height
+        )
+
+        #expect(abs(locatedRect.minX - 56) <= 2)
+        #expect(abs(locatedRect.minY - 44) <= 2)
+        #expect(location.confidence > 0.9)
+    }
+
+    @Test func imageBasedSkillDetectionTriggersOnIconCooldownTransition() async throws {
+        let iconImage = makeTestSkillIconImage(width: 32, height: 32)
+        let iconTemplate = SkillIconTemplate(
+            pngData: try #require(pngData(from: iconImage)),
+            pixelWidth: 32,
+            pixelHeight: 32
+        )
+        let timerID = UUID()
+        let rule = SkillDetectionRule(
+            skillTimerID: timerID,
+            displayName: "이미지 감지 스킬",
+            detectionMode: .locateIcon,
+            iconTemplate: iconTemplate,
+            matchThreshold: 0.55
+        )
+        let iconRect = CGRect(x: 56, y: 44, width: 32, height: 32)
+        let startedAt = Date()
+        let readyFrame = ScreenCaptureFrame(
+            image: makeFrameImage(
+                width: 160,
+                height: 120,
+                iconImage: iconImage,
+                iconRect: iconRect,
+                isCooldown: false
+            ),
+            capturedAt: startedAt
+        )
+        let cooldownFrame = ScreenCaptureFrame(
+            image: makeFrameImage(
+                width: 160,
+                height: 120,
+                iconImage: iconImage,
+                iconRect: iconRect,
+                isCooldown: true
+            ),
+            capturedAt: startedAt.addingTimeInterval(0.35)
+        )
+        let service = SkillDetectionService(
+            iconLocator: SkillIconLocator(minimumConfidence: 0.75),
+            cooldownStateDetector: SkillCooldownStateDetector(
+                cooldownConfidenceThreshold: 0.45
+            )
+        )
+
+        let readyResults = try await service.detectSkills(
+            in: readyFrame,
+            using: [rule]
+        )
+        let cooldownResults = try await service.detectSkills(
+            in: cooldownFrame,
+            using: [rule]
+        )
+
+        #expect(readyResults.isEmpty)
+        #expect(cooldownResults.count == 1)
+        #expect(cooldownResults.first?.ruleID == rule.id)
+        #expect(cooldownResults.first?.skillTimerID == timerID)
+        #expect((cooldownResults.first?.confidence ?? 0) >= 0.45)
     }
 
     @Test func autoTriggerCoordinatorStartsDetectedTimerOnce() async throws {
@@ -489,6 +707,40 @@ private final class StubSkillDetectionService: SkillDetectionProviding {
     }
 }
 
+private final class SequencedCooldownStateDetector: SkillCooldownStateDetecting {
+    private let states: [(SkillSlotVisualState, Double)]
+    private var currentIndex = 0
+
+    init(states: [(SkillSlotVisualState, Double)]) {
+        self.states = states
+    }
+
+    func detectState(
+        in frame: ScreenCaptureFrame,
+        rule: SkillDetectionRule,
+        slotRegion: NormalizedScreenRegion
+    ) -> SkillCooldownStateDetection {
+        let state: SkillSlotVisualState
+        let confidence: Double
+
+        if states.isEmpty {
+            state = .unknown
+            confidence = 0
+        } else {
+            let resolvedIndex = min(currentIndex, states.count - 1)
+            state = states[resolvedIndex].0
+            confidence = states[resolvedIndex].1
+            currentIndex += 1
+        }
+
+        return SkillCooldownStateDetection(
+            state: state,
+            confidence: confidence,
+            slotRegion: slotRegion
+        )
+    }
+}
+
 private func makeTestImage(width: Int, height: Int) -> CGImage {
     let colorSpace = CGColorSpaceCreateDeviceRGB()
     let context = CGContext(
@@ -509,4 +761,84 @@ private func makeTestImage(width: Int, height: Int) -> CGImage {
     }
 
     return image
+}
+
+private func makeTestSkillIconImage(width: Int, height: Int) -> CGImage {
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )
+
+    context?.setAllowsAntialiasing(false)
+    context?.setFillColor(CGColor(gray: 0.08, alpha: 1))
+    context?.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    context?.setFillColor(CGColor(red: 0.22, green: 0.14, blue: 0.55, alpha: 1))
+    context?.fill(CGRect(x: 3, y: 3, width: width - 6, height: height - 6))
+    context?.setStrokeColor(CGColor(red: 0.9, green: 0.85, blue: 1, alpha: 1))
+    context?.setLineWidth(3)
+    context?.strokeEllipse(in: CGRect(x: 8, y: 8, width: width - 16, height: height - 16))
+    context?.setFillColor(CGColor(red: 0.75, green: 0.65, blue: 1, alpha: 1))
+    context?.fill(CGRect(x: 14, y: 5, width: 4, height: height - 10))
+    context?.fill(CGRect(x: 5, y: 14, width: width - 10, height: 4))
+
+    guard let image = context?.makeImage() else {
+        preconditionFailure("Failed to create test skill icon")
+    }
+
+    return image
+}
+
+private func makeFrameImage(
+    width: Int,
+    height: Int,
+    iconImage: CGImage,
+    iconRect: CGRect,
+    isCooldown: Bool
+) -> CGImage {
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )
+
+    context?.setAllowsAntialiasing(false)
+    context?.setFillColor(CGColor(gray: 0.02, alpha: 1))
+    context?.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    context?.setFillColor(CGColor(gray: 0.1, alpha: 1))
+    context?.fill(CGRect(x: 0, y: height - 48, width: width, height: 48))
+    context?.interpolationQuality = .none
+    context?.draw(iconImage, in: iconRect)
+
+    if isCooldown {
+        context?.setFillColor(CGColor(gray: 0, alpha: 0.55))
+        context?.fill(iconRect)
+        context?.setFillColor(CGColor(red: 1, green: 0.9, blue: 0.08, alpha: 1))
+        context?.fill(CGRect(x: iconRect.minX + 11, y: iconRect.minY + 9, width: 4, height: 15))
+        context?.fill(CGRect(x: iconRect.minX + 18, y: iconRect.minY + 9, width: 4, height: 15))
+        context?.fill(CGRect(x: iconRect.minX + 11, y: iconRect.minY + 21, width: 11, height: 4))
+    }
+
+    guard let image = context?.makeImage() else {
+        preconditionFailure("Failed to create frame image")
+    }
+
+    return image
+}
+
+private func pngData(from image: CGImage) -> Data? {
+    NSBitmapImageRep(cgImage: image).representation(
+        using: .png,
+        properties: [:]
+    )
 }

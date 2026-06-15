@@ -11,6 +11,7 @@ import SwiftUI
 struct MacpleStoryApp: App {
     @StateObject private var timerStore = SkillTimerStore()
     @StateObject private var detectionRuleStore = SkillDetectionRuleStore()
+    @StateObject private var trackedSkillStore = TrackedSkillStore()
     @StateObject private var autoTriggerCoordinator = SkillAutoTriggerCoordinator()
     private let screenRecordingPermissionService = ScreenRecordingPermissionService()
 
@@ -19,6 +20,7 @@ struct MacpleStoryApp: App {
             ContentView()
                 .environmentObject(timerStore)
                 .environmentObject(detectionRuleStore)
+                .environmentObject(trackedSkillStore)
                 .environmentObject(autoTriggerCoordinator)
                 .onAppear {
                     timerStore.requestNotificationAuthorization()

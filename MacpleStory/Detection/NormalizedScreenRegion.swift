@@ -8,7 +8,14 @@
 import Foundation
 
 struct NormalizedScreenRegion: Codable, Equatable {
-    static let fullScreen = NormalizedScreenRegion(
+    nonisolated static let fullScreen = NormalizedScreenRegion(
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1
+    )
+
+    nonisolated static let quickSlotSearchArea = NormalizedScreenRegion(
         x: 0,
         y: 0,
         width: 1,

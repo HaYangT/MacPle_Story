@@ -102,30 +102,31 @@ final class SkillTimerStore: ObservableObject {
         }
     }
 
+    @discardableResult
     func addTimer(
         name: String,
         cooldownSeconds: Int,
         alertBeforeSeconds: Int,
         preAlertSoundID: AlertSound.ID?,
         readyAlertSoundID: AlertSound.ID?
-    ) {
+    ) -> SkillTimer? {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
-            return
+            return nil
         }
 
         let normalizedCooldown = max(1, cooldownSeconds)
         let normalizedAlert = min(max(0, alertBeforeSeconds), normalizedCooldown)
-
-        skillTimers.append(
-            SkillTimer(
-                name: trimmedName,
-                cooldownSeconds: normalizedCooldown,
-                alertBeforeSeconds: normalizedAlert,
-                preAlertSoundID: preAlertSoundID,
-                readyAlertSoundID: readyAlertSoundID
-            )
+        let timer = SkillTimer(
+            name: trimmedName,
+            cooldownSeconds: normalizedCooldown,
+            alertBeforeSeconds: normalizedAlert,
+            preAlertSoundID: preAlertSoundID,
+            readyAlertSoundID: readyAlertSoundID
         )
+
+        skillTimers.append(timer)
+        return timer
     }
 
     func playPreAlertSound(for timer: SkillTimer) {
