@@ -7,39 +7,44 @@
 
 import Foundation
 
-struct ExperienceBuffEntry: Identifiable, Codable, Equatable {
-    var id: UUID
-    var iconTemplate: SkillIconTemplate
-    var iconName: String
+/// 프리셋별 사용자 설정(추적 여부, 알림음). presetID로 키잉되어 저장된다.
+struct PresetPreference: Codable, Equatable {
+    var isTracked: Bool
     var alertSoundID: AlertSound.ID?
-    var isEnabled: Bool
 
-    init(
-        id: UUID = UUID(),
-        iconTemplate: SkillIconTemplate,
-        iconName: String,
-        alertSoundID: AlertSound.ID? = nil,
-        isEnabled: Bool = true
-    ) {
-        self.id = id
-        self.iconTemplate = iconTemplate
-        self.iconName = iconName
+    init(isTracked: Bool = false, alertSoundID: AlertSound.ID? = nil) {
+        self.isTracked = isTracked
         self.alertSoundID = alertSoundID
-        self.isEnabled = isEnabled
     }
 }
 
 struct ExperienceBuffAlertSettings: Codable, Equatable {
     var isEnabled: Bool
-    var entries: [ExperienceBuffEntry]
+    var preferences: [String: PresetPreference]
 
-    init(isEnabled: Bool = true, entries: [ExperienceBuffEntry] = []) {
+    init(isEnabled: Bool = true, preferences: [String: PresetPreference] = [:]) {
         self.isEnabled = isEnabled
-        self.entries = entries
+        self.preferences = preferences
     }
+}
 
-    var activeEntries: [ExperienceBuffEntry] {
-        guard isEnabled else { return [] }
-        return entries.filter(\.isEnabled)
+/// 감지 대상으로 확정된 버프 한 건. 프리셋 + 사용자 설정을 합쳐 런타임에 생성된다.
+struct ExperienceBuffEntry: Identifiable, Equatable {
+    /// presetID(파일명). 감지 결과·상태 추적의 키.
+    let id: String
+    let iconTemplate: SkillIconTemplate
+    let iconName: String
+    let alertSoundID: AlertSound.ID?
+
+    init(
+        id: String,
+        iconTemplate: SkillIconTemplate,
+        iconName: String,
+        alertSoundID: AlertSound.ID? = nil
+    ) {
+        self.id = id
+        self.iconTemplate = iconTemplate
+        self.iconName = iconName
+        self.alertSoundID = alertSoundID
     }
 }

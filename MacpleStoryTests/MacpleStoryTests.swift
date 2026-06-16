@@ -463,7 +463,7 @@ struct MacpleStoryTests {
             pixelWidth: 32,
             pixelHeight: 32
         )
-        let entry = ExperienceBuffEntry(iconTemplate: iconTemplate, iconName: "경험치")
+        let entry = ExperienceBuffEntry(id: "경험치", iconTemplate: iconTemplate, iconName: "경험치")
         let iconRect = CGRect(x: 64, y: 36, width: 32, height: 32)
         let startedAt = Date()
         let cleanActiveFrame = ScreenCaptureFrame(
@@ -535,7 +535,7 @@ struct MacpleStoryTests {
             pixelWidth: 32,
             pixelHeight: 32
         )
-        let entry = ExperienceBuffEntry(iconTemplate: iconTemplate, iconName: "경험치")
+        let entry = ExperienceBuffEntry(id: "경험치", iconTemplate: iconTemplate, iconName: "경험치")
         let iconRect = CGRect(x: 64, y: 36, width: 32, height: 32)
         // 실제 버프 아이콘은 밝은 상태로 남은 시간 숫자만 덧그려진다.
         let frame = ScreenCaptureFrame(
@@ -570,7 +570,7 @@ struct MacpleStoryTests {
             pixelWidth: 32,
             pixelHeight: 32
         )
-        let entry = ExperienceBuffEntry(iconTemplate: iconTemplate, iconName: "경험치")
+        let entry = ExperienceBuffEntry(id: "경험치", iconTemplate: iconTemplate, iconName: "경험치")
         // 아이콘을 좌측(x 0.4~0.6)에 배치한다.
         let iconRect = CGRect(x: 64, y: 36, width: 32, height: 32)
         let frame = ScreenCaptureFrame(
@@ -660,13 +660,17 @@ struct MacpleStoryTests {
         let suiteName = UUID().uuidString
         let userDefaults = try #require(UserDefaults(suiteName: suiteName))
         userDefaults.removePersistentDomain(forName: suiteName)
-        let experienceBuffStore = ExperienceBuffAlertStore(userDefaults: userDefaults)
-        let entry = ExperienceBuffEntry(
-            iconTemplate: SkillIconTemplate(pngData: Data([0x1]), pixelWidth: 1, pixelHeight: 1),
-            iconName: "경험치"
+        let preset = ExperienceBuffPreset(
+            id: "경험치",
+            displayName: "경험치",
+            iconTemplate: SkillIconTemplate(pngData: Data([0x1]), pixelWidth: 1, pixelHeight: 1)
         )
-        experienceBuffStore.addEntry(entry)
-        let entryID = entry.id
+        let experienceBuffStore = ExperienceBuffAlertStore(
+            userDefaults: userDefaults,
+            presets: [preset]
+        )
+        experienceBuffStore.setTracked(presetID: preset.id, isTracked: true)
+        let entryID = preset.id
         let frame = ScreenCaptureFrame(
             image: makeTestImage(width: 1280, height: 720),
             capturedAt: Date()

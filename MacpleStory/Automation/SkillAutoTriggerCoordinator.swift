@@ -31,7 +31,7 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
     private let experienceBuffMissingFrameThreshold: Int
     private var detectionTask: Task<Void, Never>?
     private var lastTriggeredAtByTimerID: [SkillTimer.ID: Date] = [:]
-    private var buffTrackingStateByEntryID: [UUID: ExperienceBuffTrackingState] = [:]
+    private var buffTrackingStateByEntryID: [String: ExperienceBuffTrackingState] = [:]
 
     init() {
         self.screenCaptureService = ScreenCaptureService()
@@ -249,7 +249,7 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
             return
         }
 
-        let activeEntries = experienceBuffStore.settings.activeEntries
+        let activeEntries = experienceBuffStore.activeEntries
 
         guard !activeEntries.isEmpty else {
             lastExperienceBuffDetectionResults = []
@@ -304,7 +304,7 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
         }
     }
 
-    private func pruneExperienceBuffStateCache(keeping activeEntryIDs: [UUID]) {
+    private func pruneExperienceBuffStateCache(keeping activeEntryIDs: [String]) {
         let activeSet = Set(activeEntryIDs)
         buffTrackingStateByEntryID = buffTrackingStateByEntryID.filter { activeSet.contains($0.key) }
     }
