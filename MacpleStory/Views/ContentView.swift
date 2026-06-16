@@ -280,100 +280,62 @@ private struct ExperienceBuffAlertSettingsView: View {
     @EnvironmentObject private var timerStore: SkillTimerStore
     @EnvironmentObject private var experienceBuffStore: ExperienceBuffAlertStore
     @EnvironmentObject private var autoTriggerCoordinator: SkillAutoTriggerCoordinator
-    @State private var iconImportErrorMessage: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Toggle(isOn: Binding(
-                    get: { experienceBuffStore.settings.isEnabled },
-                    set: { experienceBuffStore.updateEnabled($0) }
-                )) {
-                    Label("경험치 버프 알림", systemImage: "chart.line.uptrend.xyaxis")
-                        .font(.headline)
-                }
-
-                Spacer()
-
-                Button {
-                    addExperienceBuffEntry()
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .buttonStyle(.borderless)
-                .help("경험치 버프 아이콘 추가")
+            Toggle(isOn: Binding(
+                get: { experienceBuffStore.settings.isEnabled },
+                set: { experienceBuffStore.updateEnabled($0) }
+            )) {
+                Label("경험치 버프 알림", systemImage: "chart.line.uptrend.xyaxis")
+                    .font(.headline)
             }
 
             if let message = autoTriggerCoordinator.lastExperienceBuffAlertMessage,
                experienceBuffStore.settings.isEnabled,
-               !experienceBuffStore.settings.entries.isEmpty {
+               !experienceBuffStore.activeEntries.isEmpty {
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            if experienceBuffStore.settings.entries.isEmpty {
-                Text("아이콘을 추가하면 버프 종료 시 알림이 울립니다")
+            if experienceBuffStore.presets.isEmpty {
+                Text("선택 가능한 버프 아이콘이 없습니다")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(experienceBuffStore.settings.entries) { entry in
-                    ExperienceBuffEntryRow(
-                        entry: entry,
+                Text("추적할 버프를 선택하세요")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ForEach(experienceBuffStore.presets) { preset in
+                    ExperienceBuffPresetRow(
+                        preset: preset,
+                        preference: experienceBuffStore.preference(for: preset.id),
                         alertSounds: timerStore.alertSounds,
                         detectionResult: autoTriggerCoordinator.lastExperienceBuffDetectionResults
-                            .first(where: { $0.entryID == entry.id }),
+                            .first(where: { $0.entryID == preset.id }),
                         captureSource: autoTriggerCoordinator.userSelectedCaptureSource
                     )
                 }
             }
-
-            if let iconImportErrorMessage {
-                Label(iconImportErrorMessage, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-        }
-    }
-
-    private func addExperienceBuffEntry() {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowedContentTypes = [.image]
-
-        guard panel.runModal() == .OK, let selectedURL = panel.url else {
-            return
-        }
-
-        do {
-            let iconTemplate = try SkillIconTemplateImporter().importTemplate(from: selectedURL)
-            let entry = ExperienceBuffEntry(
-                iconTemplate: iconTemplate,
-                iconName: selectedURL.deletingPathExtension().lastPathComponent
-            )
-            experienceBuffStore.addEntry(entry)
-            iconImportErrorMessage = nil
-        } catch {
-            iconImportErrorMessage = error.localizedDescription
         }
     }
 }
 
-private struct ExperienceBuffEntryRow: View {
-    @EnvironmentObject private var timerStore: SkillTimerStore
+private struct ExperienceBuffPresetRow: View {
     @EnvironmentObject private var experienceBuffStore: ExperienceBuffAlertStore
 
-    let entry: ExperienceBuffEntry
+    let preset: ExperienceBuffPreset
+    let preference: PresetPreference
     let alertSounds: [AlertSound]
     let detectionResult: ExperienceBuffDetectionResult?
     let captureSource: UserSelectedCaptureSource?
 
     private var selectedAlertSoundID: Binding<String> {
         Binding(
-            get: { entry.alertSoundID ?? "" },
-            set: { experienceBuffStore.updateEntryAlertSoundID(id: entry.id, alertSoundID: $0.isEmpty ? nil : $0) }
+            get: { preference.alertSoundID ?? "" },
+            set: { experienceBuffStore.setAlertSound(presetID: preset.id, alertSoundID: $0.isEmpty ? nil : $0) }
         )
     }
 
@@ -407,7 +369,7 @@ private struct ExperienceBuffEntryRow: View {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(.quaternary)
 
-                    if let image = NSImage(data: entry.iconTemplate.pngData) {
+                    if let image = NSImage(data: preset.iconTemplate.pngData) {
                         Image(nsImage: image)
                             .resizable()
                             .interpolation(.none)
@@ -426,11 +388,11 @@ private struct ExperienceBuffEntryRow: View {
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.iconName)
+                    Text(preset.displayName)
                         .font(.subheadline)
                         .lineLimit(1)
 
-                    if let result = detectionResult {
+                    if preference.isTracked, let result = detectionResult {
                         Text(result.isActive ? "감지 중 · \(Int(result.confidence * 100))%" : "미감지")
                             .font(.caption2)
                             .foregroundStyle(result.isActive ? .green : .secondary)
@@ -447,22 +409,14 @@ private struct ExperienceBuffEntryRow: View {
                 Spacer()
 
                 Toggle("", isOn: Binding(
-                    get: { entry.isEnabled },
-                    set: { experienceBuffStore.updateEntryEnabled(id: entry.id, isEnabled: $0) }
+                    get: { preference.isTracked },
+                    set: { experienceBuffStore.setTracked(presetID: preset.id, isTracked: $0) }
                 ))
                 .labelsHidden()
-
-                Button {
-                    experienceBuffStore.removeEntry(id: entry.id)
-                } label: {
-                    Image(systemName: "trash")
-                        .foregroundStyle(.red)
-                }
-                .buttonStyle(.borderless)
-                .help("버프 제거")
+                .help("이 버프 추적")
             }
 
-            if !alertSounds.isEmpty {
+            if preference.isTracked, !alertSounds.isEmpty {
                 Picker("알림음", selection: selectedAlertSoundID) {
                     Text("선택 안 함").tag("")
                     ForEach(alertSounds) { alertSound in

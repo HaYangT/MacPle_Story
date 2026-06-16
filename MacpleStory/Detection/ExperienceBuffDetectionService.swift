@@ -9,7 +9,7 @@ import AppKit
 import Foundation
 
 struct ExperienceBuffDetectionResult: Equatable {
-    var entryID: UUID
+    var entryID: String
     var isActive: Bool
     var confidence: Double
     var detectedAt: Date

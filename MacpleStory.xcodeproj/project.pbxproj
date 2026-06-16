@@ -400,6 +400,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = /opt/homebrew/opt/opencv/include/opencv4;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSUserNotificationAlertStyle = banner;
@@ -407,7 +408,12 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = /opt/homebrew/opt/opencv/lib;
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-lopencv_core",
+					"-lopencv_imgproc",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = hayangt.MacpleStory;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -415,15 +421,9 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "MacpleStory/Bridge/MacpleStory-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				SWIFT_OBJC_BRIDGING_HEADER = "MacpleStory/Bridge/MacpleStory-Bridging-Header.h";
-				HEADER_SEARCH_PATHS = "/opt/homebrew/opt/opencv/include/opencv4";
-				LIBRARY_SEARCH_PATHS = "/opt/homebrew/opt/opencv/lib";
-				OTHER_LDFLAGS = (
-					"-lopencv_core",
-					"-lopencv_imgproc",
-				);
 			};
 			name = Debug;
 		};
@@ -440,6 +440,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = /opt/homebrew/opt/opencv/include/opencv4;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSUserNotificationAlertStyle = banner;
@@ -447,7 +448,12 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = /opt/homebrew/opt/opencv/lib;
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-lopencv_core",
+					"-lopencv_imgproc",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = hayangt.MacpleStory;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -455,15 +461,9 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "MacpleStory/Bridge/MacpleStory-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				SWIFT_OBJC_BRIDGING_HEADER = "MacpleStory/Bridge/MacpleStory-Bridging-Header.h";
-				HEADER_SEARCH_PATHS = "/opt/homebrew/opt/opencv/include/opencv4";
-				LIBRARY_SEARCH_PATHS = "/opt/homebrew/opt/opencv/lib";
-				OTHER_LDFLAGS = (
-					"-lopencv_core",
-					"-lopencv_imgproc",
-				);
 			};
 			name = Release;
 		};
