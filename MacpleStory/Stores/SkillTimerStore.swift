@@ -12,21 +12,28 @@ final class SkillTimerStore: ObservableObject {
     @Published private(set) var skillTimers: [SkillTimer] = []
     @Published private(set) var alertSounds: [AlertSound] = []
     @Published private(set) var alertPopupPlacement: AlertPopupPlacement
+    @Published private(set) var alertVolume: Double
     @Published var alertSoundImportErrorMessage: String?
 
     private let alertSoundService: AlertSoundService
     private let alertNotificationService: AlertNotificationProviding
+    private let userDefaults: UserDefaults
     private var tickerCancellable: AnyCancellable?
     private static let alertPopupPlacementDefaultsKey = "alertPopupPlacement"
+    private static let alertVolumeDefaultsKey = "alertVolume"
 
     init(
         alertSoundService: AlertSoundService = AlertSoundService(),
-        alertNotificationService: AlertNotificationProviding = AlertNotificationService()
+        alertNotificationService: AlertNotificationProviding = AlertNotificationService(),
+        userDefaults: UserDefaults = .standard
     ) {
         self.alertSoundService = alertSoundService
         self.alertNotificationService = alertNotificationService
-        self.alertPopupPlacement = Self.loadAlertPopupPlacement()
+        self.userDefaults = userDefaults
+        self.alertPopupPlacement = Self.loadAlertPopupPlacement(from: userDefaults)
+        self.alertVolume = Self.loadAlertVolume(from: userDefaults)
         self.alertNotificationService.popupPlacement = alertPopupPlacement
+        self.alertSoundService.updateVolume(alertVolume)
         reloadAlertSounds()
     }
 
@@ -92,6 +99,12 @@ final class SkillTimerStore: ObservableObject {
         saveAlertPopupPlacement(placement)
     }
 
+    func updateAlertVolume(_ volume: Double) {
+        alertVolume = min(max(volume, 0), 1)
+        alertSoundService.updateVolume(alertVolume)
+        userDefaults.set(alertVolume, forKey: Self.alertVolumeDefaultsKey)
+    }
+
     func importAlertSound(from sourceURL: URL) {
         do {
             _ = try alertSoundService.importSound(from: sourceURL)
@@ -143,6 +156,18 @@ final class SkillTimerStore: ObservableObject {
         }
 
         alertSoundService.playSound(id: soundID, from: alertSounds)
+    }
+
+    func playAlertSound(id soundID: AlertSound.ID?) {
+        guard let soundID else {
+            return
+        }
+
+        alertSoundService.playSound(id: soundID, from: alertSounds)
+    }
+
+    func notifyExperienceBuffExpired(name: String) {
+        alertNotificationService.notifyExperienceBuffExpired(name: name)
     }
 
     func removeTimer(id: SkillTimer.ID) {
@@ -292,9 +317,9 @@ final class SkillTimerStore: ObservableObject {
         tickerCancellable = nil
     }
 
-    private static func loadAlertPopupPlacement() -> AlertPopupPlacement {
+    private static func loadAlertPopupPlacement(from userDefaults: UserDefaults) -> AlertPopupPlacement {
         guard
-            let data = UserDefaults.standard.data(forKey: alertPopupPlacementDefaultsKey),
+            let data = userDefaults.data(forKey: alertPopupPlacementDefaultsKey),
             let placement = try? JSONDecoder().decode(AlertPopupPlacement.self, from: data)
         else {
             return .defaultValue
@@ -303,11 +328,19 @@ final class SkillTimerStore: ObservableObject {
         return placement
     }
 
+    private static func loadAlertVolume(from userDefaults: UserDefaults) -> Double {
+        guard userDefaults.object(forKey: alertVolumeDefaultsKey) != nil else {
+            return 0.5
+        }
+
+        return min(max(userDefaults.double(forKey: alertVolumeDefaultsKey), 0), 1)
+    }
+
     private func saveAlertPopupPlacement(_ placement: AlertPopupPlacement) {
         guard let data = try? JSONEncoder().encode(placement) else {
             return
         }
 
-        UserDefaults.standard.set(data, forKey: Self.alertPopupPlacementDefaultsKey)
+        userDefaults.set(data, forKey: Self.alertPopupPlacementDefaultsKey)
     }
 }

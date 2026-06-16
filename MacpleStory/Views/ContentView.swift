@@ -7,45 +7,65 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
+
+enum AppTab: String, CaseIterable {
+    case skillTimer = "스킬 타이머"
+    case buffAlert = "버프 감지"
+
+    var systemImage: String {
+        switch self {
+        case .skillTimer: return "timer"
+        case .buffAlert: return "chart.line.uptrend.xyaxis"
+        }
+    }
+}
 
 struct ContentView: View {
     @EnvironmentObject private var timerStore: SkillTimerStore
     @EnvironmentObject private var ruleStore: SkillDetectionRuleStore
     @EnvironmentObject private var autoTriggerCoordinator: SkillAutoTriggerCoordinator
+    @State private var selectedTab: AppTab = .skillTimer
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
             header
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 12)
 
             Divider()
 
-            RegisteredSkillListView()
-
-            Divider()
-
-            AutoTriggerControlView()
-
-            Divider()
-
-            SkillInputFormView()
-
-            Divider()
-
-            AlertPopupPlacementSettingsView()
-
-            Divider()
-
-            HStack {
-                Button("종료") {
-                    NSApplication.shared.terminate(nil)
+            Picker("", selection: $selectedTab) {
+                ForEach(AppTab.allCases, id: \.self) { tab in
+                    Label(tab.rawValue, systemImage: tab.systemImage).tag(tab)
                 }
-                .keyboardShortcut("q")
             }
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .buttonStyle(.bordered)
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    switch selectedTab {
+                    case .skillTimer:
+                        SkillTimerTabView()
+                    case .buffAlert:
+                        BuffAlertTabView()
+                    }
+                }
+                .padding(16)
+            }
+
+            Divider()
+
+            footer
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
         }
-        .padding(16)
-        .frame(width: 380)
+        .frame(width: 380, height: 540)
     }
 
     private var header: some View {
@@ -71,11 +91,61 @@ struct ContentView: View {
             )
         }
     }
+
+    private var footer: some View {
+        HStack {
+            Button("종료") {
+                NSApplication.shared.terminate(nil)
+            }
+            .keyboardShortcut("q")
+            .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
 }
+
+// MARK: - 스킬 타이머 탭
+
+private struct SkillTimerTabView: View {
+    var body: some View {
+        RegisteredSkillListView()
+
+        Divider()
+
+        SkillInputFormView()
+
+        Divider()
+
+        AutoTriggerControlView()
+
+        Divider()
+
+        AlertSettingsView()
+    }
+}
+
+// MARK: - 버프 감지 탭
+
+private struct BuffAlertTabView: View {
+    var body: some View {
+        AutoTriggerControlView()
+
+        Divider()
+
+        ExperienceBuffAlertSettingsView()
+
+        Divider()
+
+        AlertSettingsView()
+    }
+}
+
+// MARK: - 자동 감지 컨트롤
 
 private struct AutoTriggerControlView: View {
     @EnvironmentObject private var timerStore: SkillTimerStore
     @EnvironmentObject private var ruleStore: SkillDetectionRuleStore
+    @EnvironmentObject private var experienceBuffStore: ExperienceBuffAlertStore
     @EnvironmentObject private var autoTriggerCoordinator: SkillAutoTriggerCoordinator
 
     var body: some View {
@@ -142,7 +212,6 @@ private struct AutoTriggerControlView: View {
         guard let source = autoTriggerCoordinator.userSelectedCaptureSource else {
             return "캡처 창 미선택"
         }
-
         return "\(source.displayName) · \(source.sizeText)"
     }
 
@@ -177,7 +246,6 @@ private struct AutoTriggerControlView: View {
         guard let snapshot = autoTriggerCoordinator.lastDetectionDebugSnapshot else {
             return nil
         }
-
         return "\(snapshot.message) · \(snapshot.summaryText)"
     }
 
@@ -192,7 +260,8 @@ private struct AutoTriggerControlView: View {
             Task {
                 await autoTriggerCoordinator.startMonitoring(
                     timerStore: timerStore,
-                    ruleStore: ruleStore
+                    ruleStore: ruleStore,
+                    experienceBuffStore: experienceBuffStore
                 )
             }
         }
@@ -205,11 +274,217 @@ private struct AutoTriggerControlView: View {
     }
 }
 
-private struct AlertPopupPlacementSettingsView: View {
+// MARK: - 경험치 버프 알림 설정
+
+private struct ExperienceBuffAlertSettingsView: View {
     @EnvironmentObject private var timerStore: SkillTimerStore
+    @EnvironmentObject private var experienceBuffStore: ExperienceBuffAlertStore
+    @EnvironmentObject private var autoTriggerCoordinator: SkillAutoTriggerCoordinator
+    @State private var iconImportErrorMessage: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Toggle(isOn: Binding(
+                    get: { experienceBuffStore.settings.isEnabled },
+                    set: { experienceBuffStore.updateEnabled($0) }
+                )) {
+                    Label("경험치 버프 알림", systemImage: "chart.line.uptrend.xyaxis")
+                        .font(.headline)
+                }
+
+                Spacer()
+
+                Button {
+                    addExperienceBuffEntry()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.borderless)
+                .help("경험치 버프 아이콘 추가")
+            }
+
+            if let message = autoTriggerCoordinator.lastExperienceBuffAlertMessage,
+               experienceBuffStore.settings.isEnabled,
+               !experienceBuffStore.settings.entries.isEmpty {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if experienceBuffStore.settings.entries.isEmpty {
+                Text("아이콘을 추가하면 버프 종료 시 알림이 울립니다")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(experienceBuffStore.settings.entries) { entry in
+                    ExperienceBuffEntryRow(
+                        entry: entry,
+                        alertSounds: timerStore.alertSounds,
+                        detectionResult: autoTriggerCoordinator.lastExperienceBuffDetectionResults
+                            .first(where: { $0.entryID == entry.id }),
+                        captureSource: autoTriggerCoordinator.userSelectedCaptureSource
+                    )
+                }
+            }
+
+            if let iconImportErrorMessage {
+                Label(iconImportErrorMessage, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    private func addExperienceBuffEntry() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.image]
+
+        guard panel.runModal() == .OK, let selectedURL = panel.url else {
+            return
+        }
+
+        do {
+            let iconTemplate = try SkillIconTemplateImporter().importTemplate(from: selectedURL)
+            let entry = ExperienceBuffEntry(
+                iconTemplate: iconTemplate,
+                iconName: selectedURL.deletingPathExtension().lastPathComponent
+            )
+            experienceBuffStore.addEntry(entry)
+            iconImportErrorMessage = nil
+        } catch {
+            iconImportErrorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct ExperienceBuffEntryRow: View {
+    @EnvironmentObject private var timerStore: SkillTimerStore
+    @EnvironmentObject private var experienceBuffStore: ExperienceBuffAlertStore
+
+    let entry: ExperienceBuffEntry
+    let alertSounds: [AlertSound]
+    let detectionResult: ExperienceBuffDetectionResult?
+    let captureSource: UserSelectedCaptureSource?
+
+    private var selectedAlertSoundID: Binding<String> {
+        Binding(
+            get: { entry.alertSoundID ?? "" },
+            set: { experienceBuffStore.updateEntryAlertSoundID(id: entry.id, alertSoundID: $0.isEmpty ? nil : $0) }
+        )
+    }
+
+    private var coordinateText: String? {
+        guard let result = detectionResult,
+              result.isActive,
+              let region = result.iconRegion else {
+            return nil
+        }
+
+        guard let captureSource else {
+            return String(
+                format: "위치 %.0f%%, %.0f%%",
+                region.x * 100,
+                region.y * 100
+            )
+        }
+
+        let rect = region.pixelRect(
+            pixelWidth: captureSource.pixelWidth,
+            pixelHeight: captureSource.pixelHeight
+        )
+
+        return "x:\(Int(rect.minX)) y:\(Int(rect.minY)) · \(Int(rect.width))×\(Int(rect.height))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(.quaternary)
+
+                    if let image = NSImage(data: entry.iconTemplate.pngData) {
+                        Image(nsImage: image)
+                            .resizable()
+                            .interpolation(.none)
+                            .scaledToFit()
+                            .padding(3)
+                    }
+                }
+                .frame(width: 34, height: 34)
+                .overlay(alignment: .bottomTrailing) {
+                    if detectionResult?.isActive == true {
+                        Circle()
+                            .fill(.green)
+                            .frame(width: 8, height: 8)
+                            .offset(x: 2, y: 2)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.iconName)
+                        .font(.subheadline)
+                        .lineLimit(1)
+
+                    if let result = detectionResult {
+                        Text(result.isActive ? "감지 중 · \(Int(result.confidence * 100))%" : "미감지")
+                            .font(.caption2)
+                            .foregroundStyle(result.isActive ? .green : .secondary)
+
+                        if let coordinateText {
+                            Text(coordinateText)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+
+                Spacer()
+
+                Toggle("", isOn: Binding(
+                    get: { entry.isEnabled },
+                    set: { experienceBuffStore.updateEntryEnabled(id: entry.id, isEnabled: $0) }
+                ))
+                .labelsHidden()
+
+                Button {
+                    experienceBuffStore.removeEntry(id: entry.id)
+                } label: {
+                    Image(systemName: "trash")
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.borderless)
+                .help("버프 제거")
+            }
+
+            if !alertSounds.isEmpty {
+                Picker("알림음", selection: selectedAlertSoundID) {
+                    Text("선택 안 함").tag("")
+                    ForEach(alertSounds) { alertSound in
+                        Text("\(alertSound.displayName) · \(alertSound.formatLabel)")
+                            .tag(alertSound.id)
+                    }
+                }
+                .font(.caption)
+            }
+        }
+        .padding(8)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+// MARK: - 알림 설정
+
+private struct AlertSettingsView: View {
+    @EnvironmentObject private var timerStore: SkillTimerStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("알림 위치")
@@ -228,9 +503,30 @@ private struct AlertPopupPlacementSettingsView: View {
                     Label("위치 설정", systemImage: "location.viewfinder")
                 }
             }
+
+            HStack(spacing: 10) {
+                Image(systemName: "speaker.wave.2")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20)
+
+                Slider(
+                    value: Binding(
+                        get: { timerStore.alertVolume * 100 },
+                        set: { timerStore.updateAlertVolume($0 / 100) }
+                    ),
+                    in: 0...100,
+                    step: 1
+                )
+
+                Text("\(Int((timerStore.alertVolume * 100).rounded()))%")
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(width: 38, alignment: .trailing)
+            }
         }
     }
 }
+
+// MARK: - 등록된 스킬 목록
 
 private struct RegisteredSkillListView: View {
     @EnvironmentObject private var timerStore: SkillTimerStore
@@ -251,18 +547,17 @@ private struct RegisteredSkillListView: View {
             if timerStore.skillTimers.isEmpty {
                 EmptyTimerView()
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        ForEach(timerStore.skillTimers) { skillTimer in
-                            SkillTimerRowView(skillTimer: skillTimer)
-                        }
+                LazyVStack(spacing: 8) {
+                    ForEach(timerStore.skillTimers) { skillTimer in
+                        SkillTimerRowView(skillTimer: skillTimer)
                     }
                 }
-                .frame(minHeight: 74, maxHeight: 220)
             }
         }
     }
 }
+
+// MARK: - 공통 컴포넌트
 
 private struct StatusBadge: View {
     let runningCount: Int
@@ -284,13 +579,11 @@ private struct StatusBadge: View {
 
 private struct EmptyTimerView: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("아직 등록된 스킬이 없습니다", systemImage: "clock")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 6)
+        Label("아직 등록된 스킬이 없습니다", systemImage: "clock")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 6)
     }
 }
 
@@ -300,6 +593,7 @@ struct ContentView_Previews: PreviewProvider {
             .environmentObject(SkillTimerStore())
             .environmentObject(SkillDetectionRuleStore())
             .environmentObject(TrackedSkillStore())
+            .environmentObject(ExperienceBuffAlertStore())
             .environmentObject(SkillAutoTriggerCoordinator())
     }
 }
