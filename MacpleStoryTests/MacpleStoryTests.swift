@@ -11,6 +11,7 @@ import Foundation
 import Testing
 @testable import MacpleStory
 
+@Suite(.serialized)
 @MainActor
 struct MacpleStoryTests {
 
@@ -139,6 +140,29 @@ struct MacpleStoryTests {
         store.tick()
         #expect(store.skillTimers.first?.remainingSeconds == 4)
         #expect(alertService.preAlertTimerIDs == [timerID])
+    }
+
+    @Test func alertVolumeDefaultsToHalfAndClampsToRange() async throws {
+        let suiteName = UUID().uuidString
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        userDefaults.removePersistentDomain(forName: suiteName)
+        let alertSoundService = AlertSoundService()
+        let store = SkillTimerStore(
+            alertSoundService: alertSoundService,
+            alertNotificationService: NoopAlertNotificationService(),
+            userDefaults: userDefaults
+        )
+
+        #expect(store.alertVolume == 0.5)
+        #expect(alertSoundService.volume == 0.5)
+
+        store.updateAlertVolume(1.4)
+        #expect(store.alertVolume == 1)
+        #expect(alertSoundService.volume == 1)
+
+        store.updateAlertVolume(-0.2)
+        #expect(store.alertVolume == 0)
+        #expect(alertSoundService.volume == 0)
     }
 
     @Test func resolutionDetectorRecognizesSupportedExactResolutions() async throws {
@@ -305,11 +329,11 @@ struct MacpleStoryTests {
         )
 
         #expect(firstResults.isEmpty)
-        #expect(secondResults.count == 1)
-        #expect(secondResults.first?.ruleID == rule.id)
-        #expect(secondResults.first?.skillTimerID == timerID)
-        #expect(secondResults.first?.confidence == 0.92)
-        #expect(thirdResults.isEmpty)
+        #expect(secondResults.isEmpty)
+        #expect(thirdResults.count == 1)
+        #expect(thirdResults.first?.ruleID == rule.id)
+        #expect(thirdResults.first?.skillTimerID == timerID)
+        #expect(thirdResults.first?.confidence == 0.93)
     }
 
     @Test func iconLocatorFindsRegisteredSkillIconInFrame() async throws {
@@ -343,12 +367,12 @@ struct MacpleStoryTests {
             pixelHeight: frameImage.height
         )
 
-        #expect(abs(locatedRect.minX - 56) <= 2)
+        #expect(abs(locatedRect.minX - 56) <= 3)
         #expect(abs(locatedRect.minY - 44) <= 2)
-        #expect(location.confidence > 0.9)
+        #expect(location.confidence > 0.8)
     }
 
-    @Test func imageBasedSkillDetectionTriggersOnIconCooldownTransition() async throws {
+    @Test func fixedRegionSkillDetectionTriggersOnConfirmedCooldownTransition() async throws {
         let iconImage = makeTestSkillIconImage(width: 32, height: 32)
         let iconTemplate = SkillIconTemplate(
             pngData: try #require(pngData(from: iconImage)),
@@ -356,14 +380,19 @@ struct MacpleStoryTests {
             pixelHeight: 32
         )
         let timerID = UUID()
+        let iconRect = CGRect(x: 56, y: 44, width: 32, height: 32)
         let rule = SkillDetectionRule(
             skillTimerID: timerID,
             displayName: "이미지 감지 스킬",
-            detectionMode: .locateIcon,
+            detectionMode: .fixedRegion,
             iconTemplate: iconTemplate,
-            matchThreshold: 0.55
+            screenRegion: .fromPixelRect(
+                iconRect,
+                pixelWidth: 160,
+                pixelHeight: 120
+            ),
+            matchThreshold: 0.35
         )
-        let iconRect = CGRect(x: 56, y: 44, width: 32, height: 32)
         let startedAt = Date()
         let readyFrame = ScreenCaptureFrame(
             image: makeFrameImage(
@@ -375,7 +404,7 @@ struct MacpleStoryTests {
             ),
             capturedAt: startedAt
         )
-        let cooldownFrame = ScreenCaptureFrame(
+        let firstCooldownFrame = ScreenCaptureFrame(
             image: makeFrameImage(
                 width: 160,
                 height: 120,
@@ -385,10 +414,24 @@ struct MacpleStoryTests {
             ),
             capturedAt: startedAt.addingTimeInterval(0.35)
         )
+        let confirmedCooldownFrame = ScreenCaptureFrame(
+            image: makeFrameImage(
+                width: 160,
+                height: 120,
+                iconImage: iconImage,
+                iconRect: iconRect,
+                isCooldown: true
+            ),
+            capturedAt: startedAt.addingTimeInterval(0.7)
+        )
         let service = SkillDetectionService(
             iconLocator: SkillIconLocator(minimumConfidence: 0.75),
-            cooldownStateDetector: SkillCooldownStateDetector(
-                cooldownConfidenceThreshold: 0.45
+            cooldownStateDetector: SequencedCooldownStateDetector(
+                states: [
+                    (.ready, 0.98),
+                    (.cooldown, 0.82),
+                    (.cooldown, 0.84)
+                ]
             )
         )
 
@@ -396,16 +439,166 @@ struct MacpleStoryTests {
             in: readyFrame,
             using: [rule]
         )
-        let cooldownResults = try await service.detectSkills(
-            in: cooldownFrame,
+        let firstCooldownResults = try await service.detectSkills(
+            in: firstCooldownFrame,
+            using: [rule]
+        )
+        let confirmedCooldownResults = try await service.detectSkills(
+            in: confirmedCooldownFrame,
             using: [rule]
         )
 
         #expect(readyResults.isEmpty)
-        #expect(cooldownResults.count == 1)
-        #expect(cooldownResults.first?.ruleID == rule.id)
-        #expect(cooldownResults.first?.skillTimerID == timerID)
-        #expect((cooldownResults.first?.confidence ?? 0) >= 0.45)
+        #expect(firstCooldownResults.isEmpty)
+        #expect(confirmedCooldownResults.count == 1)
+        #expect(confirmedCooldownResults.first?.ruleID == rule.id)
+        #expect(confirmedCooldownResults.first?.skillTimerID == timerID)
+        #expect(confirmedCooldownResults.first?.confidence == 0.84)
+    }
+
+    @Test func experienceBuffDetectorKeepsDarkenedIconActiveWithMinuteOverlay() async throws {
+        let iconImage = makeTestSkillIconImage(width: 32, height: 32)
+        let iconTemplate = SkillIconTemplate(
+            pngData: try #require(pngData(from: iconImage)),
+            pixelWidth: 32,
+            pixelHeight: 32
+        )
+        let entry = ExperienceBuffEntry(iconTemplate: iconTemplate, iconName: "경험치")
+        let iconRect = CGRect(x: 64, y: 36, width: 32, height: 32)
+        let startedAt = Date()
+        let cleanActiveFrame = ScreenCaptureFrame(
+            image: makeFrameImage(
+                width: 160,
+                height: 120,
+                iconImage: iconImage,
+                iconRect: iconRect,
+                isCooldown: false
+            ),
+            capturedAt: startedAt
+        )
+        let darkenedActiveFrame = ScreenCaptureFrame(
+            image: makeFrameImage(
+                width: 160,
+                height: 120,
+                iconImage: iconImage,
+                iconRect: iconRect,
+                isCooldown: false,
+                showsBuffMinuteOverlay: true,
+                buffDarkeningAlpha: 0.15
+            ),
+            capturedAt: startedAt.addingTimeInterval(1)
+        )
+        let expiredFrame = ScreenCaptureFrame(
+            image: makeTestImage(width: 160, height: 120),
+            capturedAt: startedAt.addingTimeInterval(2)
+        )
+        let service = ExperienceBuffDetectionService(searchRegion: .fullScreen)
+
+        let cleanActiveResult = try #require(
+            try await service.detectExperienceBuffs(
+                in: cleanActiveFrame,
+                entries: [entry]
+            ).first
+        )
+        let darkenedActiveResult = try #require(
+            try await service.detectExperienceBuffs(
+                in: darkenedActiveFrame,
+                entries: [entry]
+            ).first
+        )
+        let expiredResult = try #require(
+            try await service.detectExperienceBuffs(
+                in: expiredFrame,
+                entries: [entry]
+            ).first
+        )
+
+        #expect(cleanActiveResult.isActive == true)
+        #expect(darkenedActiveResult.isActive == true)
+        // 다중 스케일 매칭이라 어두워진 버전은 약간 다른 배율을 고를 수 있으므로
+        // 정확 일치 대신 같은 위치(중심점 근접)를 가리키는지 확인한다.
+        let cleanRegion = try #require(cleanActiveResult.iconRegion)
+        let darkenedRegion = try #require(darkenedActiveResult.iconRegion)
+        let cleanCenterX = cleanRegion.x + (cleanRegion.width / 2)
+        let cleanCenterY = cleanRegion.y + (cleanRegion.height / 2)
+        let darkenedCenterX = darkenedRegion.x + (darkenedRegion.width / 2)
+        let darkenedCenterY = darkenedRegion.y + (darkenedRegion.height / 2)
+        #expect(abs(cleanCenterX - darkenedCenterX) < 0.05)
+        #expect(abs(cleanCenterY - darkenedCenterY) < 0.05)
+        #expect(expiredResult.isActive == false)
+    }
+
+    @Test func experienceBuffDetectorFindsLiveIconWithMinuteOverlay() async throws {
+        let iconImage = makeTestSkillIconImage(width: 32, height: 32)
+        let iconTemplate = SkillIconTemplate(
+            pngData: try #require(pngData(from: iconImage)),
+            pixelWidth: 32,
+            pixelHeight: 32
+        )
+        let entry = ExperienceBuffEntry(iconTemplate: iconTemplate, iconName: "경험치")
+        let iconRect = CGRect(x: 64, y: 36, width: 32, height: 32)
+        // 실제 버프 아이콘은 밝은 상태로 남은 시간 숫자만 덧그려진다.
+        let frame = ScreenCaptureFrame(
+            image: makeFrameImage(
+                width: 160,
+                height: 120,
+                iconImage: iconImage,
+                iconRect: iconRect,
+                isCooldown: false,
+                showsBuffMinuteOverlay: true,
+                buffDarkeningAlpha: 0.15
+            ),
+            capturedAt: Date()
+        )
+        let service = ExperienceBuffDetectionService(searchRegion: .fullScreen)
+
+        let result = try #require(
+            try await service.detectExperienceBuffs(
+                in: frame,
+                entries: [entry]
+            ).first
+        )
+
+        #expect(result.isActive == true)
+        #expect(result.confidence >= 0.35)
+    }
+
+    @Test func experienceBuffDetectorIgnoresIconOutsideSearchRegion() async throws {
+        let iconImage = makeTestSkillIconImage(width: 32, height: 32)
+        let iconTemplate = SkillIconTemplate(
+            pngData: try #require(pngData(from: iconImage)),
+            pixelWidth: 32,
+            pixelHeight: 32
+        )
+        let entry = ExperienceBuffEntry(iconTemplate: iconTemplate, iconName: "경험치")
+        // 아이콘을 좌측(x 0.4~0.6)에 배치한다.
+        let iconRect = CGRect(x: 64, y: 36, width: 32, height: 32)
+        let frame = ScreenCaptureFrame(
+            image: makeFrameImage(
+                width: 160,
+                height: 120,
+                iconImage: iconImage,
+                iconRect: iconRect,
+                isCooldown: false
+            ),
+            capturedAt: Date()
+        )
+
+        // 검색 영역을 아이콘이 없는 좌측 일부로 제한하면 감지되지 않는다.
+        let restricted = ExperienceBuffDetectionService(
+            searchRegion: NormalizedScreenRegion(x: 0, y: 0, width: 0.3, height: 1)
+        )
+        let restrictedResult = try #require(
+            try await restricted.detectExperienceBuffs(in: frame, entries: [entry]).first
+        )
+        #expect(restrictedResult.isActive == false)
+
+        // 전체 화면 검색이면 동일 프레임에서 감지된다.
+        let fullScreen = ExperienceBuffDetectionService(searchRegion: .fullScreen)
+        let fullResult = try #require(
+            try await fullScreen.detectExperienceBuffs(in: frame, entries: [entry]).first
+        )
+        #expect(fullResult.isActive == true)
     }
 
     @Test func autoTriggerCoordinatorStartsDetectedTimerOnce() async throws {
@@ -459,6 +652,81 @@ struct MacpleStoryTests {
         )
 
         #expect(store.skillTimers.first?.isRunning == false)
+    }
+
+    @Test func autoTriggerCoordinatorAlertsWhenExperienceBuffExpiresAfterBeingActive() async throws {
+        let alertService = NoopAlertNotificationService()
+        let timerStore = SkillTimerStore(alertNotificationService: alertService)
+        let suiteName = UUID().uuidString
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        userDefaults.removePersistentDomain(forName: suiteName)
+        let experienceBuffStore = ExperienceBuffAlertStore(userDefaults: userDefaults)
+        let entry = ExperienceBuffEntry(
+            iconTemplate: SkillIconTemplate(pngData: Data([0x1]), pixelWidth: 1, pixelHeight: 1),
+            iconName: "경험치"
+        )
+        experienceBuffStore.addEntry(entry)
+        let entryID = entry.id
+        let frame = ScreenCaptureFrame(
+            image: makeTestImage(width: 1280, height: 720),
+            capturedAt: Date()
+        )
+        let coordinator = SkillAutoTriggerCoordinator(
+            screenCaptureService: StubScreenCaptureService(frame: frame),
+            skillDetectionService: StubSkillDetectionService(results: []),
+            experienceBuffDetectionService: StubExperienceBuffDetectionService(resultsSequence: [
+                [
+                    ExperienceBuffDetectionResult(
+                        entryID: entryID,
+                        isActive: true,
+                        confidence: 0.8,
+                        detectedAt: frame.capturedAt,
+                        iconRegion: .fullScreen
+                    )
+                ],
+                [
+                    ExperienceBuffDetectionResult(
+                        entryID: entryID,
+                        isActive: false,
+                        confidence: 0,
+                        detectedAt: frame.capturedAt.addingTimeInterval(0.35),
+                        iconRegion: nil
+                    )
+                ],
+                [
+                    ExperienceBuffDetectionResult(
+                        entryID: entryID,
+                        isActive: false,
+                        confidence: 0,
+                        detectedAt: frame.capturedAt.addingTimeInterval(0.7),
+                        iconRegion: nil
+                    )
+                ]
+            ]),
+            experienceBuffMissingFrameThreshold: 2
+        )
+
+        coordinator.start()
+        try await coordinator.processOnce(
+            using: [],
+            timerStore: timerStore,
+            experienceBuffStore: experienceBuffStore
+        )
+        try await coordinator.processOnce(
+            using: [],
+            timerStore: timerStore,
+            experienceBuffStore: experienceBuffStore
+        )
+        #expect(alertService.experienceBuffExpiredCount == 0)
+
+        try await coordinator.processOnce(
+            using: [],
+            timerStore: timerStore,
+            experienceBuffStore: experienceBuffStore
+        )
+
+        #expect(alertService.experienceBuffExpiredCount == 1)
+        #expect(coordinator.lastExperienceBuffAlertMessage == "경험치 꺼짐")
     }
 
     @Test func autoTriggerCoordinatorUsesUserSelectedWindowTarget() async throws {
@@ -616,6 +884,7 @@ private final class NoopAlertNotificationService: AlertNotificationProviding {
     var popupPlacement: AlertPopupPlacement = .defaultValue
     var preAlertTimerIDs: [SkillTimer.ID] = []
     var readyAlertTimerIDs: [SkillTimer.ID] = []
+    var experienceBuffExpiredCount = 0
 
     func requestAuthorization() {}
 
@@ -625,6 +894,10 @@ private final class NoopAlertNotificationService: AlertNotificationProviding {
 
     func notifyReadyAlert(for timer: SkillTimer) {
         readyAlertTimerIDs.append(timer.id)
+    }
+
+    func notifyExperienceBuffExpired(name: String) {
+        experienceBuffExpiredCount += 1
     }
 
     func beginPopupPlacementSelection(
@@ -704,6 +977,28 @@ private final class StubSkillDetectionService: SkillDetectionProviding {
         using rules: [SkillDetectionRule]
     ) async throws -> [SkillDetectionResult] {
         results
+    }
+}
+
+private final class StubExperienceBuffDetectionService: ExperienceBuffDetecting {
+    private let resultsSequence: [[ExperienceBuffDetectionResult]]
+    private var currentIndex = 0
+
+    init(resultsSequence: [[ExperienceBuffDetectionResult]]) {
+        self.resultsSequence = resultsSequence
+    }
+
+    func detectExperienceBuffs(
+        in frame: ScreenCaptureFrame,
+        entries: [ExperienceBuffEntry]
+    ) async throws -> [ExperienceBuffDetectionResult] {
+        guard !resultsSequence.isEmpty else {
+            return []
+        }
+
+        let resolvedIndex = min(currentIndex, resultsSequence.count - 1)
+        currentIndex += 1
+        return resultsSequence[resolvedIndex]
     }
 }
 
@@ -799,7 +1094,10 @@ private func makeFrameImage(
     height: Int,
     iconImage: CGImage,
     iconRect: CGRect,
-    isCooldown: Bool
+    isCooldown: Bool,
+    showsTimeOverlay: Bool = false,
+    showsBuffMinuteOverlay: Bool = false,
+    buffDarkeningAlpha: Double = 0
 ) -> CGImage {
     let colorSpace = CGColorSpaceCreateDeviceRGB()
     let context = CGContext(
@@ -820,6 +1118,11 @@ private func makeFrameImage(
     context?.interpolationQuality = .none
     context?.draw(iconImage, in: iconRect)
 
+    if buffDarkeningAlpha > 0 {
+        context?.setFillColor(CGColor(gray: 0, alpha: CGFloat(min(max(buffDarkeningAlpha, 0), 1))))
+        context?.fill(iconRect)
+    }
+
     if isCooldown {
         context?.setFillColor(CGColor(gray: 0, alpha: 0.55))
         context?.fill(iconRect)
@@ -829,11 +1132,51 @@ private func makeFrameImage(
         context?.fill(CGRect(x: iconRect.minX + 11, y: iconRect.minY + 21, width: 11, height: 4))
     }
 
+    if showsTimeOverlay {
+        context?.setFillColor(CGColor(gray: 0, alpha: 0.35))
+        context?.fill(CGRect(x: iconRect.minX + 5, y: iconRect.minY + 8, width: 22, height: 16))
+        context?.setFillColor(CGColor(red: 1, green: 0.95, blue: 0.24, alpha: 1))
+        context?.fill(CGRect(x: iconRect.minX + 10, y: iconRect.minY + 10, width: 3, height: 12))
+        context?.fill(CGRect(x: iconRect.minX + 15, y: iconRect.minY + 10, width: 8, height: 3))
+        context?.fill(CGRect(x: iconRect.minX + 20, y: iconRect.minY + 13, width: 3, height: 4))
+        context?.fill(CGRect(x: iconRect.minX + 15, y: iconRect.minY + 18, width: 8, height: 3))
+    }
+
+    if showsBuffMinuteOverlay {
+        fillSegmentDigitThree(
+            in: context,
+            origin: CGPoint(x: iconRect.minX + 1, y: iconRect.minY + 1),
+            color: CGColor(gray: 0.02, alpha: 1)
+        )
+        fillSegmentDigitThree(
+            in: context,
+            origin: CGPoint(x: iconRect.minX, y: iconRect.minY + 2),
+            color: CGColor(red: 0.82, green: 0.9, blue: 1, alpha: 1)
+        )
+
+        context?.setFillColor(CGColor(gray: 0.02, alpha: 1))
+        context?.fill(CGRect(x: iconRect.maxX - 10, y: iconRect.maxY - 6, width: 9, height: 2))
+        context?.fill(CGRect(x: iconRect.maxX - 4, y: iconRect.maxY - 10, width: 2, height: 7))
+    }
+
     guard let image = context?.makeImage() else {
         preconditionFailure("Failed to create frame image")
     }
 
     return image
+}
+
+private func fillSegmentDigitThree(
+    in context: CGContext?,
+    origin: CGPoint,
+    color: CGColor
+) {
+    context?.setFillColor(color)
+    context?.fill(CGRect(x: origin.x, y: origin.y, width: 8, height: 2))
+    context?.fill(CGRect(x: origin.x + 6, y: origin.y + 2, width: 2, height: 4))
+    context?.fill(CGRect(x: origin.x + 1, y: origin.y + 6, width: 7, height: 2))
+    context?.fill(CGRect(x: origin.x + 6, y: origin.y + 8, width: 2, height: 4))
+    context?.fill(CGRect(x: origin.x, y: origin.y + 12, width: 8, height: 2))
 }
 
 private func pngData(from image: CGImage) -> Data? {

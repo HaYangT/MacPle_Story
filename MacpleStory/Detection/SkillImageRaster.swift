@@ -131,6 +131,10 @@ struct SkillImageSample: Equatable {
                 && blue < 0.28
                 && red >= green
         }
+
+        var saturation: Double {
+            max(red, green, blue) - min(red, green, blue)
+        }
     }
 
     var size: Int
@@ -153,6 +157,16 @@ struct SkillImageSample: Equatable {
 
         let yellowPixelCount = pixels.filter(\.isCooldownDigitYellow).count
         return Double(yellowPixelCount) / Double(pixels.count)
+    }
+
+    var averageSaturation: Double {
+        guard !pixels.isEmpty else {
+            return 0
+        }
+
+        return pixels.reduce(0) { partialResult, pixel in
+            partialResult + pixel.saturation
+        } / Double(pixels.count)
     }
 
     func similarity(to other: SkillImageSample) -> Double {

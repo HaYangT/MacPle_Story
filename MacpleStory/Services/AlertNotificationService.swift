@@ -15,6 +15,7 @@ protocol AlertNotificationProviding: AnyObject {
     func requestAuthorization()
     func notifyPreAlert(for timer: SkillTimer)
     func notifyReadyAlert(for timer: SkillTimer)
+    func notifyExperienceBuffExpired(name: String)
     func beginPopupPlacementSelection(
         initialPlacement: AlertPopupPlacement,
         completion: @escaping (AlertPopupPlacement) -> Void
@@ -61,6 +62,14 @@ final class AlertNotificationService: NSObject, AlertNotificationProviding, UNUs
             title: "스킬 사용 가능",
             body: "\(timer.name)을 사용할 수 있습니다.",
             identifier: "\(timer.id.uuidString)-ready-alert-\(Date().timeIntervalSince1970)"
+        )
+    }
+
+    func notifyExperienceBuffExpired(name: String) {
+        sendNotification(
+            title: "경험치 버프 꺼짐",
+            body: "\(name) 버프가 꺼졌습니다.",
+            identifier: "experience-buff-expired-\(Date().timeIntervalSince1970)"
         )
     }
 

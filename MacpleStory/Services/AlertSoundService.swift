@@ -12,6 +12,11 @@ final class AlertSoundService {
     static let supportedFileExtensions: Set<String> = ["wav", "mp3"]
 
     private var sound: NSSound?
+    private(set) var volume: Float = 0.5
+
+    func updateVolume(_ volume: Double) {
+        self.volume = Float(min(max(volume, 0), 1))
+    }
 
     func availableSounds() -> [AlertSound] {
         (bundledSounds() + userSounds())
@@ -55,6 +60,7 @@ final class AlertSoundService {
         }
 
         self.sound = sound
+        sound.volume = volume
         sound.play()
     }
 

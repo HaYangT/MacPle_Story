@@ -18,49 +18,64 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
     @Published private(set) var lastDetectionDebugSnapshot: SkillDetectionDebugSnapshot?
     @Published private(set) var lastDetectedResolution: MapleStoryResolutionDetectionResult?
     @Published private(set) var lastTriggeredSkillTimerID: SkillTimer.ID?
+    @Published private(set) var lastExperienceBuffDetectionResults: [ExperienceBuffDetectionResult] = []
+    @Published private(set) var lastExperienceBuffAlertMessage: String?
     @Published private(set) var lastErrorMessage: String?
 
     private let screenCaptureService: ScreenCaptureProviding
     private let skillDetectionService: SkillDetectionProviding
+    private let experienceBuffDetectionService: ExperienceBuffDetecting
     private let resolutionDetector: MapleStoryResolutionDetecting
     private let detectionInterval: TimeInterval
     private let triggerLockout: TimeInterval
+    private let experienceBuffMissingFrameThreshold: Int
     private var detectionTask: Task<Void, Never>?
     private var lastTriggeredAtByTimerID: [SkillTimer.ID: Date] = [:]
+    private var buffTrackingStateByEntryID: [UUID: ExperienceBuffTrackingState] = [:]
 
     init() {
         self.screenCaptureService = ScreenCaptureService()
         self.skillDetectionService = SkillDetectionService()
+        self.experienceBuffDetectionService = ExperienceBuffDetectionService()
         self.resolutionDetector = MapleStoryResolutionDetector()
         self.detectionInterval = 0.35
         self.triggerLockout = 1.5
+        self.experienceBuffMissingFrameThreshold = 3
     }
 
     init(
         screenCaptureService: ScreenCaptureProviding,
         skillDetectionService: SkillDetectionProviding,
+        experienceBuffDetectionService: ExperienceBuffDetecting? = nil,
         detectionInterval: TimeInterval = 0.35,
-        triggerLockout: TimeInterval = 1.5
+        triggerLockout: TimeInterval = 1.5,
+        experienceBuffMissingFrameThreshold: Int = 3
     ) {
         self.screenCaptureService = screenCaptureService
         self.skillDetectionService = skillDetectionService
+        self.experienceBuffDetectionService = experienceBuffDetectionService ?? ExperienceBuffDetectionService()
         self.resolutionDetector = MapleStoryResolutionDetector()
         self.detectionInterval = detectionInterval
         self.triggerLockout = triggerLockout
+        self.experienceBuffMissingFrameThreshold = max(1, experienceBuffMissingFrameThreshold)
     }
 
     init(
         screenCaptureService: ScreenCaptureProviding,
         skillDetectionService: SkillDetectionProviding,
+        experienceBuffDetectionService: ExperienceBuffDetecting? = nil,
         resolutionDetector: MapleStoryResolutionDetecting,
         detectionInterval: TimeInterval = 0.35,
-        triggerLockout: TimeInterval = 1.5
+        triggerLockout: TimeInterval = 1.5,
+        experienceBuffMissingFrameThreshold: Int = 3
     ) {
         self.screenCaptureService = screenCaptureService
         self.skillDetectionService = skillDetectionService
+        self.experienceBuffDetectionService = experienceBuffDetectionService ?? ExperienceBuffDetectionService()
         self.resolutionDetector = resolutionDetector
         self.detectionInterval = detectionInterval
         self.triggerLockout = triggerLockout
+        self.experienceBuffMissingFrameThreshold = max(1, experienceBuffMissingFrameThreshold)
     }
 
     func start() {
@@ -100,7 +115,8 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
 
     func startMonitoring(
         timerStore: SkillTimerStore,
-        ruleStore: SkillDetectionRuleStore
+        ruleStore: SkillDetectionRuleStore,
+        experienceBuffStore: ExperienceBuffAlertStore? = nil
     ) async {
         guard detectionTask == nil else {
             return
@@ -129,7 +145,8 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
                 do {
                     try await self.processOnce(
                         using: ruleStore.rules,
-                        timerStore: timerStore
+                        timerStore: timerStore,
+                        experienceBuffStore: experienceBuffStore
                     )
                     self.lastErrorMessage = nil
                 } catch {
@@ -149,14 +166,19 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
         lastDetectionDebugSnapshot = nil
         lastDetectedResolution = nil
         lastTriggeredSkillTimerID = nil
+        lastExperienceBuffDetectionResults = []
+        lastExperienceBuffAlertMessage = nil
+        buffTrackingStateByEntryID = [:]
     }
 
     func processOnce(
         using rules: [SkillDetectionRule],
-        timerStore: SkillTimerStore? = nil
+        timerStore: SkillTimerStore? = nil,
+        experienceBuffStore: ExperienceBuffAlertStore? = nil
     ) async throws {
         guard isRunning else {
             lastDetectedResult = nil
+            lastExperienceBuffDetectionResults = []
             return
         }
 
@@ -165,7 +187,23 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
         }
 
         lastDetectedResolution = resolutionDetector.detectResolution(in: frame)
+        try await processSkillDetection(
+            in: frame,
+            using: rules,
+            timerStore: timerStore
+        )
+        try await processExperienceBuffDetection(
+            in: frame,
+            timerStore: timerStore,
+            experienceBuffStore: experienceBuffStore
+        )
+    }
 
+    private func processSkillDetection(
+        in frame: ScreenCaptureFrame,
+        using rules: [SkillDetectionRule],
+        timerStore: SkillTimerStore?
+    ) async throws {
         let enabledRules = rules.filter(\.isEnabled)
         guard !enabledRules.isEmpty else {
             lastDetectedResult = nil
@@ -199,6 +237,76 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
             for: detectedResult,
             timerStore: timerStore
         )
+    }
+
+    private func processExperienceBuffDetection(
+        in frame: ScreenCaptureFrame,
+        timerStore: SkillTimerStore?,
+        experienceBuffStore: ExperienceBuffAlertStore?
+    ) async throws {
+        guard let timerStore,
+              let experienceBuffStore else {
+            return
+        }
+
+        let activeEntries = experienceBuffStore.settings.activeEntries
+
+        guard !activeEntries.isEmpty else {
+            lastExperienceBuffDetectionResults = []
+            lastExperienceBuffAlertMessage = nil
+            buffTrackingStateByEntryID = [:]
+            return
+        }
+
+        let results = try await experienceBuffDetectionService.detectExperienceBuffs(
+            in: frame,
+            entries: activeEntries
+        )
+
+        lastExperienceBuffDetectionResults = results
+
+        pruneExperienceBuffStateCache(keeping: activeEntries.map(\.id))
+
+        var expiredEntryNames: [String] = []
+
+        for result in results {
+            guard let entry = activeEntries.first(where: { $0.id == result.entryID }) else {
+                continue
+            }
+
+            let currentState = buffTrackingStateByEntryID[result.entryID] ?? .waitingForActivation
+
+            let (nextState, didExpire) = currentState.transition(
+                isActive: result.isActive,
+                missingFrameThreshold: experienceBuffMissingFrameThreshold
+            )
+
+            buffTrackingStateByEntryID[result.entryID] = nextState
+
+            if didExpire {
+                expiredEntryNames.append(entry.iconName)
+                timerStore.playAlertSound(id: entry.alertSoundID)
+                timerStore.notifyExperienceBuffExpired(name: entry.iconName)
+            }
+        }
+
+        let activeCount = results.filter(\.isActive).count
+        let alertedCount = buffTrackingStateByEntryID.values.filter { $0.isAlertedInactive }.count
+
+        if !expiredEntryNames.isEmpty {
+            lastExperienceBuffAlertMessage = "\(expiredEntryNames.joined(separator: ", ")) 꺼짐"
+        } else if alertedCount > 0 {
+            lastExperienceBuffAlertMessage = "버프 꺼짐 · 재활성 대기 중"
+        } else if activeCount > 0 {
+            lastExperienceBuffAlertMessage = "경험치 버프 \(activeCount)개 감지 중"
+        } else {
+            lastExperienceBuffAlertMessage = "버프 활성화 대기 중"
+        }
+    }
+
+    private func pruneExperienceBuffStateCache(keeping activeEntryIDs: [UUID]) {
+        let activeSet = Set(activeEntryIDs)
+        buffTrackingStateByEntryID = buffTrackingStateByEntryID.filter { activeSet.contains($0.key) }
     }
 
     private var detectionIntervalNanoseconds: UInt64 {

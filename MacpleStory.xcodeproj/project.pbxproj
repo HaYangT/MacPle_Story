@@ -396,7 +396,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 3ZQ8XMB65M;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -417,6 +417,13 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
+				SWIFT_OBJC_BRIDGING_HEADER = "MacpleStory/Bridge/MacpleStory-Bridging-Header.h";
+				HEADER_SEARCH_PATHS = "/opt/homebrew/opt/opencv/include/opencv4";
+				LIBRARY_SEARCH_PATHS = "/opt/homebrew/opt/opencv/lib";
+				OTHER_LDFLAGS = (
+					"-lopencv_core",
+					"-lopencv_imgproc",
+				);
 			};
 			name = Debug;
 		};
@@ -429,7 +436,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 3ZQ8XMB65M;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -450,6 +457,13 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
+				SWIFT_OBJC_BRIDGING_HEADER = "MacpleStory/Bridge/MacpleStory-Bridging-Header.h";
+				HEADER_SEARCH_PATHS = "/opt/homebrew/opt/opencv/include/opencv4";
+				LIBRARY_SEARCH_PATHS = "/opt/homebrew/opt/opencv/lib";
+				OTHER_LDFLAGS = (
+					"-lopencv_core",
+					"-lopencv_imgproc",
+				);
 			};
 			name = Release;
 		};
