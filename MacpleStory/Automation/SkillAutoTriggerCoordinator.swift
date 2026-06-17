@@ -32,10 +32,17 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
     private let triggerLockout: TimeInterval
     private let experienceBuffMissingFrameThreshold: Int
     private let fixedDurationAlertLeadSeconds = 15
+    private let buffScanInterval: TimeInterval = 1.0
     private var detectionTask: Task<Void, Never>?
     private var lastTriggeredAtByTimerID: [SkillTimer.ID: Date] = [:]
     private var buffTrackingStateByEntryID: [String: ExperienceBuffTrackingState] = [:]
     private var buffFixedDurationStateByEntryID: [String: FixedDurationAlertState] = [:]
+    /// 버프 매칭을 마지막으로 실행한 시각(프레임 시계 기준). lazy 주기 throttle용.
+    private var lastBuffScanAt: Date?
+    /// 라운드로빈으로 한 틱에 하나의 후보 버프만 매칭하기 위한 인덱스.
+    private var buffRoundRobinIndex = 0
+    /// 엔트리별 최신 감지 결과(틱 사이 UI 깜빡임 방지용 유지).
+    private var lastBuffResultByEntryID: [String: ExperienceBuffDetectionResult] = [:]
 
     init() {
         self.screenCaptureService = ScreenCaptureService()
@@ -157,7 +164,8 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
                     self.lastErrorMessage = error.localizedDescription
                 }
 
-                try? await Task.sleep(nanoseconds: self.detectionIntervalNanoseconds)
+                // 스킬 감지가 없으면(버프 전용) 캡처 주기를 버프 스캔 주기로 늦춰 리소스 절약.
+                try? await Task.sleep(nanoseconds: self.loopIntervalNanoseconds(skillRules: ruleStore.rules))
             }
         }
     }
@@ -175,6 +183,9 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
         buffTrackingStateByEntryID = [:]
         buffFixedDurationStateByEntryID = [:]
         buffExpiryByEntryID = [:]
+        lastBuffResultByEntryID = [:]
+        lastBuffScanAt = nil
+        buffRoundRobinIndex = 0
     }
 
     func processOnce(
@@ -263,63 +274,20 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
             buffTrackingStateByEntryID = [:]
             buffFixedDurationStateByEntryID = [:]
             buffExpiryByEntryID = [:]
+            lastBuffResultByEntryID = [:]
+            lastBuffScanAt = nil
             return
         }
 
         pruneExperienceBuffStateCache(keeping: activeEntries.map(\.id))
 
         let now = frame.capturedAt
-
-        // 타이머가 돌고 있는 시간 기반 버프는 매칭을 건너뛴다(효율).
-        // 만료 시각까지는 결과가 뻔하므로 시계만으로 처리한다.
-        let timingEntries = activeEntries.filter { isFixedDurationTimerRunning($0) }
-        let timingIDs = Set(timingEntries.map(\.id))
-        let entriesToDetect = activeEntries.filter { !timingIDs.contains($0.id) }
-
-        let detectedResults = entriesToDetect.isEmpty
-            ? []
-            : try await experienceBuffDetectionService.detectExperienceBuffs(
-                in: frame,
-                entries: entriesToDetect
-            )
-
         var expiredEntryNames: [String] = []
         var expiringEntryNames: [String] = []
 
-        // 1) 매칭한 버프 처리
-        for result in detectedResults {
-            guard let entry = entriesToDetect.first(where: { $0.id == result.entryID }) else {
-                continue
-            }
-
-            if let durationSeconds = entry.durationSeconds {
-                if handleFixedDuration(
-                    entry: entry,
-                    isActive: result.isActive,
-                    durationSeconds: durationSeconds,
-                    now: now,
-                    timerStore: timerStore
-                ) {
-                    expiringEntryNames.append(entry.iconName)
-                }
-            } else {
-                let currentState = buffTrackingStateByEntryID[result.entryID] ?? .waitingForActivation
-                let (nextState, didExpire) = currentState.transition(
-                    isActive: result.isActive,
-                    missingFrameThreshold: experienceBuffMissingFrameThreshold
-                )
-                buffTrackingStateByEntryID[result.entryID] = nextState
-
-                if didExpire {
-                    expiredEntryNames.append(entry.iconName)
-                    timerStore.playAlertSound(id: entry.alertSoundID)
-                    timerStore.notifyExperienceBuffExpired(name: entry.iconName)
-                }
-            }
-        }
-
-        // 2) 타이머 진행 중인 버프: 매칭 없이 시계로만 발화/만료 처리
-        var timingResults: [ExperienceBuffDetectionResult] = []
+        // 1) 타이머 진행 중인 시간 기반 버프: 매칭 없이 시계로만 발화/만료 처리(매 틱).
+        let timingEntries = activeEntries.filter { isFixedDurationTimerRunning($0) }
+        let timingIDs = Set(timingEntries.map(\.id))
         for entry in timingEntries {
             guard let durationSeconds = entry.durationSeconds else {
                 continue
@@ -335,21 +303,67 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
                 expiringEntryNames.append(entry.iconName)
             }
 
-            // 타이머가 아직 살아있으면 UI에 "활성"으로 표시
             if buffFixedDurationStateByEntryID[entry.id]?.scheduledFireAt != nil {
-                timingResults.append(
-                    ExperienceBuffDetectionResult(
-                        entryID: entry.id,
-                        isActive: true,
-                        confidence: 1,
-                        detectedAt: now,
-                        iconRegion: nil
-                    )
+                lastBuffResultByEntryID[entry.id] = ExperienceBuffDetectionResult(
+                    entryID: entry.id,
+                    isActive: true,
+                    confidence: 1,
+                    detectedAt: now,
+                    iconRegion: nil
                 )
+            } else {
+                lastBuffResultByEntryID[entry.id] = nil
             }
         }
 
-        lastExperienceBuffDetectionResults = detectedResults + timingResults
+        // 2) 나머지(매칭 필요) 버프: lazy 주기 + 라운드로빈으로 한 틱에 하나만 매칭.
+        let candidateEntries = activeEntries.filter { !timingIDs.contains($0.id) }
+        let shouldScan = lastBuffScanAt.map { now.timeIntervalSince($0) >= buffScanInterval } ?? true
+
+        if shouldScan, !candidateEntries.isEmpty {
+            lastBuffScanAt = now
+            let entry = candidateEntries[buffRoundRobinIndex % candidateEntries.count]
+            buffRoundRobinIndex += 1
+
+            let results = try await experienceBuffDetectionService.detectExperienceBuffs(
+                in: frame,
+                entries: [entry]
+            )
+
+            if let result = results.first {
+                lastBuffResultByEntryID[entry.id] = result
+
+                if let durationSeconds = entry.durationSeconds {
+                    if handleFixedDuration(
+                        entry: entry,
+                        isActive: result.isActive,
+                        durationSeconds: durationSeconds,
+                        now: now,
+                        timerStore: timerStore
+                    ) {
+                        expiringEntryNames.append(entry.iconName)
+                    }
+                } else {
+                    let currentState = buffTrackingStateByEntryID[entry.id] ?? .waitingForActivation
+                    let (nextState, didExpire) = currentState.transition(
+                        isActive: result.isActive,
+                        missingFrameThreshold: experienceBuffMissingFrameThreshold
+                    )
+                    buffTrackingStateByEntryID[entry.id] = nextState
+
+                    if didExpire {
+                        expiredEntryNames.append(entry.iconName)
+                        timerStore.playAlertSound(id: entry.alertSoundID)
+                        timerStore.notifyExperienceBuffExpired(name: entry.iconName)
+                    }
+                }
+            }
+        }
+
+        // 활성 엔트리 기준으로 유지 결과 정리 후 게시.
+        let activeIDs = Set(activeEntries.map(\.id))
+        lastBuffResultByEntryID = lastBuffResultByEntryID.filter { activeIDs.contains($0.key) }
+        lastExperienceBuffDetectionResults = Array(lastBuffResultByEntryID.values)
 
         updateExperienceBuffMessage(
             results: lastExperienceBuffDetectionResults,
@@ -434,6 +448,14 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
 
     private var detectionIntervalNanoseconds: UInt64 {
         UInt64(detectionInterval * 1_000_000_000)
+    }
+
+    /// 다음 캡처까지 대기 시간. 스킬 감지(쿨다운)는 빠른 프레임이 필요하므로 기본 주기,
+    /// 활성 스킬 규칙이 없으면(버프 전용) 버프 스캔 주기로 늦춰 캡처 횟수를 줄인다.
+    private func loopIntervalNanoseconds(skillRules: [SkillDetectionRule]) -> UInt64 {
+        let hasSkillWork = skillRules.contains(where: \.isEnabled)
+        let interval = hasSkillWork ? detectionInterval : max(detectionInterval, buffScanInterval)
+        return UInt64(interval * 1_000_000_000)
     }
 
     private func triggerTimerIfNeeded(

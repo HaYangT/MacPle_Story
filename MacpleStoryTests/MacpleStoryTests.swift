@@ -763,12 +763,20 @@ struct MacpleStoryTests {
         )
         experienceBuffStore.setTracked(presetID: preset.id, isTracked: true)
         let entryID = preset.id
-        let frame = ScreenCaptureFrame(
-            image: makeTestImage(width: 1280, height: 720),
-            capturedAt: Date()
-        )
+        // 버프 매칭은 lazy 주기(1초)로 throttle되므로, 프레임 시각을 1초 이상 벌려 매 틱 스캔되게 한다.
+        let startedAt = Date()
+        func makeFrame(_ offset: TimeInterval) -> ScreenCaptureFrame {
+            ScreenCaptureFrame(
+                image: makeTestImage(width: 1280, height: 720),
+                capturedAt: startedAt.addingTimeInterval(offset)
+            )
+        }
         let coordinator = SkillAutoTriggerCoordinator(
-            screenCaptureService: StubScreenCaptureService(frame: frame),
+            screenCaptureService: SequencedScreenCaptureService(frames: [
+                makeFrame(0),
+                makeFrame(1),
+                makeFrame(2)
+            ]),
             skillDetectionService: StubSkillDetectionService(results: []),
             experienceBuffDetectionService: StubExperienceBuffDetectionService(resultsSequence: [
                 [
@@ -776,7 +784,7 @@ struct MacpleStoryTests {
                         entryID: entryID,
                         isActive: true,
                         confidence: 0.8,
-                        detectedAt: frame.capturedAt,
+                        detectedAt: startedAt,
                         iconRegion: .fullScreen
                     )
                 ],
@@ -785,7 +793,7 @@ struct MacpleStoryTests {
                         entryID: entryID,
                         isActive: false,
                         confidence: 0,
-                        detectedAt: frame.capturedAt.addingTimeInterval(0.35),
+                        detectedAt: startedAt.addingTimeInterval(1),
                         iconRegion: nil
                     )
                 ],
@@ -794,7 +802,7 @@ struct MacpleStoryTests {
                         entryID: entryID,
                         isActive: false,
                         confidence: 0,
-                        detectedAt: frame.capturedAt.addingTimeInterval(0.7),
+                        detectedAt: startedAt.addingTimeInterval(2),
                         iconRegion: nil
                     )
                 ]

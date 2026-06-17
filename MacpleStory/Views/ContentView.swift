@@ -353,11 +353,12 @@ private struct ExperienceBuffPresetRow: View {
     }
 
     private func detectionStatusText(_ result: ExperienceBuffDetectionResult) -> String {
+        let percent = Int(result.confidence * 100)
+
         guard result.isActive else {
-            return "미감지"
+            return "미감지 · 최고 \(percent)%"
         }
 
-        let percent = Int(result.confidence * 100)
         if let variant = result.matchedVariantName, variant != preset.displayName {
             return "감지 중 · \(variant) · \(percent)%"
         }

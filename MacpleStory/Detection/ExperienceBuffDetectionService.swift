@@ -46,16 +46,20 @@ protocol ExperienceBuffDetecting {
 final class ExperienceBuffDetectionService: ExperienceBuffDetecting {
     private let matchThreshold: Double
     private let searchRegion: NormalizedScreenRegion
+    /// 변형 이름(아이콘 파일명) → 디코딩된 CGImage 캐시. PNG→NSImage→CGImage 재디코딩 방지.
+    private var templateImageCache: [String: CGImage] = [:]
 
-    /// 버프는 화면 우상단에 위치한다. 스킬 퀵슬롯(하단/중앙)의 동일 아이콘 오인식을
-    /// 막기 위해 우상단 영역만 검색한다.
+    /// 버프는 화면 우상단 버프 바에 위치한다. 스킬 퀵슬롯(하단/중앙) 오인식을 막고
+    /// 상관맵 면적을 줄이기 위해 우상단 띠(상단 ~22%)만 검색한다.
+    /// 버프는 화면 상단(우측 위주)의 버프 바에 위치하고 여러 줄로 왼쪽·아래로 확장된다.
+    /// 하단 스킬 퀵슬롯 오인식은 막으면서 버프 바 전체를 포함하도록 상단 40%를 검색한다.
     init(
         matchThreshold: Double = 0.75,
         searchRegion: NormalizedScreenRegion = NormalizedScreenRegion(
-            x: 0.5,
+            x: 0,
             y: 0,
-            width: 0.5,
-            height: 0.5
+            width: 1.0,
+            height: 0.4
         )
     ) {
         self.matchThreshold = matchThreshold
@@ -84,48 +88,41 @@ final class ExperienceBuffDetectionService: ExperienceBuffDetecting {
             height: searchRegion.height
         )
 
-        // 변형(2배/3배/4배 등) 중 가장 높은 점수로 매칭된 것을 채택한다.
-        var bestScore = -1.0
-        var bestRegion: NormalizedScreenRegion?
-        var bestVariantName: String?
-
-        for variant in entry.variants {
-            guard variant.iconTemplate.hasImageData,
-                  let templateImage = Self.cgImage(from: variant.iconTemplate) else {
-                continue
+        // 변형 전부를 배치로 한 번에 검사(프레임 Mat 1회 변환 + 템플릿 Mat 캐시).
+        let templates = entry.variants.compactMap { variant -> OpenCVBuffTemplate? in
+            guard let image = cachedCGImage(for: variant) else {
+                return nil
             }
-
-            let match = OpenCVBuffMatcher.matchTemplate(
-                templateImage,
-                inFrame: frame.image,
-                searchRegion: searchRect,
-                threshold: matchThreshold
-            )
-
-            guard match.found, match.score > bestScore else {
-                continue
-            }
-
-            bestScore = match.score
-            bestRegion = NormalizedScreenRegion.fromPixelRect(
-                match.regionInPixels,
-                pixelWidth: frame.image.width,
-                pixelHeight: frame.image.height
-            )
-            bestVariantName = variant.name
+            return OpenCVBuffTemplate(identifier: variant.name, image: image)
         }
 
-        guard bestScore >= 0 else {
+        guard !templates.isEmpty else {
             return inactiveResult(for: entry, at: frame.capturedAt)
         }
 
+        let match = OpenCVBuffMatcher.match(
+            templates,
+            inFrame: frame.image,
+            searchRegion: searchRect,
+            threshold: matchThreshold
+        )
+
+        // 미감지여도 최고 점수를 confidence로 실어 UI에서 근접도를 볼 수 있게 한다.
+        let region = match.found
+            ? NormalizedScreenRegion.fromPixelRect(
+                match.regionInPixels,
+                pixelWidth: frame.image.width,
+                pixelHeight: frame.image.height
+              )
+            : nil
+
         return ExperienceBuffDetectionResult(
             entryID: entry.id,
-            isActive: true,
-            confidence: bestScore,
+            isActive: match.found,
+            confidence: match.score,
             detectedAt: frame.capturedAt,
-            iconRegion: bestRegion,
-            matchedVariantName: bestVariantName
+            iconRegion: region,
+            matchedVariantName: match.found ? match.matchedTemplateId : nil
         )
     }
 
@@ -140,6 +137,20 @@ final class ExperienceBuffDetectionService: ExperienceBuffDetecting {
             detectedAt: detectedAt,
             iconRegion: nil
         )
+    }
+
+    private func cachedCGImage(for variant: BuffIconVariant) -> CGImage? {
+        if let cached = templateImageCache[variant.name] {
+            return cached
+        }
+
+        guard variant.iconTemplate.hasImageData,
+              let image = Self.cgImage(from: variant.iconTemplate) else {
+            return nil
+        }
+
+        templateImageCache[variant.name] = image
+        return image
     }
 
     private static func cgImage(from template: SkillIconTemplate) -> CGImage? {

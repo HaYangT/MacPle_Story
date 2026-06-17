@@ -1,6 +1,6 @@
 [
   { "name": "경험치 쿠폰", "icon": "EXP_2", "icons": ["EXP_2", "EXP_3", "EXP_4"], "durations": [15, 30, 45, 60] },
-  { "name": "비약","icon": "Nostrum_5", "icons": ["Nostrum_1","Nostrum_2","Nostrum_3","Nostrum_4","Nostrum_5"], "durations": [30, 120] },
+  { "name": "비약","icon": "Nostrum_5", "icons": ["Nostrum_4","Nostrum_5"], "durations": [30, 120] },
   { "name": "익스트림 골드", "icons": ["ExtremeGold"] },
   { "name": "아즈모스 영약", "icons": ["AzmothDrink"] },
   { "name": "홀리 심볼", "icons": ["HollySimbol"] },
