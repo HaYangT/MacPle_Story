@@ -14,6 +14,24 @@ struct ExperienceBuffDetectionResult: Equatable {
     var confidence: Double
     var detectedAt: Date
     var iconRegion: NormalizedScreenRegion?
+    /// 활성일 때 어떤 변형(2배/3배 등)이 매칭됐는지.
+    var matchedVariantName: String?
+
+    init(
+        entryID: String,
+        isActive: Bool,
+        confidence: Double,
+        detectedAt: Date,
+        iconRegion: NormalizedScreenRegion?,
+        matchedVariantName: String? = nil
+    ) {
+        self.entryID = entryID
+        self.isActive = isActive
+        self.confidence = confidence
+        self.detectedAt = detectedAt
+        self.iconRegion = iconRegion
+        self.matchedVariantName = matchedVariantName
+    }
 }
 
 protocol ExperienceBuffDetecting {
@@ -59,39 +77,55 @@ final class ExperienceBuffDetectionService: ExperienceBuffDetecting {
         _ entry: ExperienceBuffEntry,
         in frame: ScreenCaptureFrame
     ) -> ExperienceBuffDetectionResult {
-        guard entry.iconTemplate.hasImageData,
-              let templateImage = Self.cgImage(from: entry.iconTemplate) else {
-            return inactiveResult(for: entry, at: frame.capturedAt)
-        }
-
-        let match = OpenCVBuffMatcher.matchTemplate(
-            templateImage,
-            inFrame: frame.image,
-            searchRegion: CGRect(
-                x: searchRegion.x,
-                y: searchRegion.y,
-                width: searchRegion.width,
-                height: searchRegion.height
-            ),
-            threshold: matchThreshold
+        let searchRect = CGRect(
+            x: searchRegion.x,
+            y: searchRegion.y,
+            width: searchRegion.width,
+            height: searchRegion.height
         )
 
-        guard match.found else {
-            return inactiveResult(for: entry, at: frame.capturedAt)
+        // 변형(2배/3배/4배 등) 중 가장 높은 점수로 매칭된 것을 채택한다.
+        var bestScore = -1.0
+        var bestRegion: NormalizedScreenRegion?
+        var bestVariantName: String?
+
+        for variant in entry.variants {
+            guard variant.iconTemplate.hasImageData,
+                  let templateImage = Self.cgImage(from: variant.iconTemplate) else {
+                continue
+            }
+
+            let match = OpenCVBuffMatcher.matchTemplate(
+                templateImage,
+                inFrame: frame.image,
+                searchRegion: searchRect,
+                threshold: matchThreshold
+            )
+
+            guard match.found, match.score > bestScore else {
+                continue
+            }
+
+            bestScore = match.score
+            bestRegion = NormalizedScreenRegion.fromPixelRect(
+                match.regionInPixels,
+                pixelWidth: frame.image.width,
+                pixelHeight: frame.image.height
+            )
+            bestVariantName = variant.name
         }
 
-        let region = NormalizedScreenRegion.fromPixelRect(
-            match.regionInPixels,
-            pixelWidth: frame.image.width,
-            pixelHeight: frame.image.height
-        )
+        guard bestScore >= 0 else {
+            return inactiveResult(for: entry, at: frame.capturedAt)
+        }
 
         return ExperienceBuffDetectionResult(
             entryID: entry.id,
             isActive: true,
-            confidence: match.score,
+            confidence: bestScore,
             detectedAt: frame.capturedAt,
-            iconRegion: region
+            iconRegion: bestRegion,
+            matchedVariantName: bestVariantName
         )
     }
 

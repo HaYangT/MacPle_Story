@@ -20,6 +20,8 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
     @Published private(set) var lastTriggeredSkillTimerID: SkillTimer.ID?
     @Published private(set) var lastExperienceBuffDetectionResults: [ExperienceBuffDetectionResult] = []
     @Published private(set) var lastExperienceBuffAlertMessage: String?
+    /// 시간 기반 버프의 만료 예정 시각(presetID 기준). UI 카운트다운에 사용.
+    @Published private(set) var buffExpiryByEntryID: [String: Date] = [:]
     @Published private(set) var lastErrorMessage: String?
 
     private let screenCaptureService: ScreenCaptureProviding
@@ -29,9 +31,11 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
     private let detectionInterval: TimeInterval
     private let triggerLockout: TimeInterval
     private let experienceBuffMissingFrameThreshold: Int
+    private let fixedDurationAlertLeadSeconds = 15
     private var detectionTask: Task<Void, Never>?
     private var lastTriggeredAtByTimerID: [SkillTimer.ID: Date] = [:]
     private var buffTrackingStateByEntryID: [String: ExperienceBuffTrackingState] = [:]
+    private var buffFixedDurationStateByEntryID: [String: FixedDurationAlertState] = [:]
 
     init() {
         self.screenCaptureService = ScreenCaptureService()
@@ -169,6 +173,8 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
         lastExperienceBuffDetectionResults = []
         lastExperienceBuffAlertMessage = nil
         buffTrackingStateByEntryID = [:]
+        buffFixedDurationStateByEntryID = [:]
+        buffExpiryByEntryID = [:]
     }
 
     func processOnce(
@@ -255,6 +261,8 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
             lastExperienceBuffDetectionResults = []
             lastExperienceBuffAlertMessage = nil
             buffTrackingStateByEntryID = [:]
+            buffFixedDurationStateByEntryID = [:]
+            buffExpiryByEntryID = [:]
             return
         }
 
@@ -268,32 +276,104 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
         pruneExperienceBuffStateCache(keeping: activeEntries.map(\.id))
 
         var expiredEntryNames: [String] = []
+        var expiringEntryNames: [String] = []
 
         for result in results {
             guard let entry = activeEntries.first(where: { $0.id == result.entryID }) else {
                 continue
             }
 
-            let currentState = buffTrackingStateByEntryID[result.entryID] ?? .waitingForActivation
+            if let durationSeconds = entry.durationSeconds {
+                // 시간 기반: 감지되면 (지속시간 − 15초) 뒤에 한 번 알림.
+                if handleFixedDurationAlert(
+                    entry: entry,
+                    result: result,
+                    durationSeconds: durationSeconds,
+                    timerStore: timerStore
+                ) {
+                    expiringEntryNames.append(entry.iconName)
+                }
+            } else {
+                // 사라지면 알림(기존 방식).
+                let currentState = buffTrackingStateByEntryID[result.entryID] ?? .waitingForActivation
+                let (nextState, didExpire) = currentState.transition(
+                    isActive: result.isActive,
+                    missingFrameThreshold: experienceBuffMissingFrameThreshold
+                )
+                buffTrackingStateByEntryID[result.entryID] = nextState
 
-            let (nextState, didExpire) = currentState.transition(
-                isActive: result.isActive,
-                missingFrameThreshold: experienceBuffMissingFrameThreshold
-            )
-
-            buffTrackingStateByEntryID[result.entryID] = nextState
-
-            if didExpire {
-                expiredEntryNames.append(entry.iconName)
-                timerStore.playAlertSound(id: entry.alertSoundID)
-                timerStore.notifyExperienceBuffExpired(name: entry.iconName)
+                if didExpire {
+                    expiredEntryNames.append(entry.iconName)
+                    timerStore.playAlertSound(id: entry.alertSoundID)
+                    timerStore.notifyExperienceBuffExpired(name: entry.iconName)
+                }
             }
         }
 
+        updateExperienceBuffMessage(
+            results: results,
+            expiredEntryNames: expiredEntryNames,
+            expiringEntryNames: expiringEntryNames
+        )
+    }
+
+    /// 시간 기반 버프 처리. 알림을 이번에 발화했으면 true.
+    private func handleFixedDurationAlert(
+        entry: ExperienceBuffEntry,
+        result: ExperienceBuffDetectionResult,
+        durationSeconds: Int,
+        timerStore: SkillTimerStore
+    ) -> Bool {
+        var state = buffFixedDurationStateByEntryID[entry.id] ?? FixedDurationAlertState()
+        let now = result.detectedAt
+
+        if result.isActive {
+            state.missingFrames = 0
+            if state.scheduledFireAt == nil {
+                // 감지 시작 → 알림 예약 + 만료 시각 기록
+                let lead = TimeInterval(max(0, durationSeconds - fixedDurationAlertLeadSeconds))
+                state.scheduledFireAt = now.addingTimeInterval(lead)
+                state.didFire = false
+                buffExpiryByEntryID[entry.id] = now.addingTimeInterval(TimeInterval(durationSeconds))
+            }
+        } else if state.scheduledFireAt != nil {
+            state.missingFrames += 1
+        }
+
+        var didFireNow = false
+        if let fireAt = state.scheduledFireAt, !state.didFire, now >= fireAt {
+            state.didFire = true
+            didFireNow = true
+            timerStore.playAlertSound(id: entry.alertSoundID)
+            timerStore.notifyExperienceBuffExpiring(
+                name: entry.iconName,
+                secondsLeft: fixedDurationAlertLeadSeconds
+            )
+        }
+
+        // 버프가 확실히 사라졌으면 초기화 → 다음 사용 시 재예약
+        if !result.isActive,
+           state.scheduledFireAt != nil,
+           state.missingFrames >= experienceBuffMissingFrameThreshold {
+            state = FixedDurationAlertState()
+            buffExpiryByEntryID[entry.id] = nil
+        }
+
+        buffFixedDurationStateByEntryID[entry.id] = state
+        return didFireNow
+    }
+
+    private func updateExperienceBuffMessage(
+        results: [ExperienceBuffDetectionResult],
+        expiredEntryNames: [String],
+        expiringEntryNames: [String]
+    ) {
         let activeCount = results.filter(\.isActive).count
         let alertedCount = buffTrackingStateByEntryID.values.filter { $0.isAlertedInactive }.count
 
-        if !expiredEntryNames.isEmpty {
+        if !expiringEntryNames.isEmpty {
+            lastExperienceBuffAlertMessage = "\(expiringEntryNames.joined(separator: ", ")) 곧 만료"
+        } else if !expiredEntryNames.isEmpty {
             lastExperienceBuffAlertMessage = "\(expiredEntryNames.joined(separator: ", ")) 꺼짐"
         } else if alertedCount > 0 {
             lastExperienceBuffAlertMessage = "버프 꺼짐 · 재활성 대기 중"
@@ -307,6 +387,8 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
     private func pruneExperienceBuffStateCache(keeping activeEntryIDs: [String]) {
         let activeSet = Set(activeEntryIDs)
         buffTrackingStateByEntryID = buffTrackingStateByEntryID.filter { activeSet.contains($0.key) }
+        buffFixedDurationStateByEntryID = buffFixedDurationStateByEntryID.filter { activeSet.contains($0.key) }
+        buffExpiryByEntryID = buffExpiryByEntryID.filter { activeSet.contains($0.key) }
     }
 
     private var detectionIntervalNanoseconds: UInt64 {

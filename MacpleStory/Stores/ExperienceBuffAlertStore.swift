@@ -39,11 +39,38 @@ final class ExperienceBuffAlertStore: ObservableObject {
 
             return ExperienceBuffEntry(
                 id: preset.id,
-                iconTemplate: preset.iconTemplate,
                 iconName: preset.displayName,
-                alertSoundID: settings.preferences[preset.id]?.alertSoundID
+                variants: preset.variants,
+                alertSoundID: settings.preferences[preset.id]?.alertSoundID,
+                durationSeconds: resolvedDurationSeconds(for: preset)
             )
         }
+    }
+
+    /// 시간 기반 버프의 지속시간(초). 사용자가 고른 값(없으면 첫 옵션) × 60.
+    private func resolvedDurationSeconds(for preset: ExperienceBuffPreset) -> Int? {
+        guard preset.isFixedDuration else {
+            return nil
+        }
+
+        let selected = settings.preferences[preset.id]?.selectedDurationMinutes
+        let minutes = selected.flatMap { value in
+            preset.durationsMinutes.contains(value) ? value : nil
+        } ?? preset.durationsMinutes.first
+
+        return minutes.map { $0 * 60 }
+    }
+
+    /// 사용자가 고른 지속시간(분). 시간 기반 버프 행에서 표시·선택용.
+    func selectedDurationMinutes(for preset: ExperienceBuffPreset) -> Int? {
+        guard preset.isFixedDuration else {
+            return nil
+        }
+
+        let selected = settings.preferences[preset.id]?.selectedDurationMinutes
+        return selected.flatMap { value in
+            preset.durationsMinutes.contains(value) ? value : nil
+        } ?? preset.durationsMinutes.first
     }
 
     func preference(for presetID: String) -> PresetPreference {
@@ -65,6 +92,13 @@ final class ExperienceBuffAlertStore: ObservableObject {
     func setAlertSound(presetID: String, alertSoundID: AlertSound.ID?) {
         var preference = settings.preferences[presetID] ?? PresetPreference()
         preference.alertSoundID = alertSoundID
+        settings.preferences[presetID] = preference
+        saveSettings()
+    }
+
+    func setDuration(presetID: String, minutes: Int) {
+        var preference = settings.preferences[presetID] ?? PresetPreference()
+        preference.selectedDurationMinutes = minutes
         settings.preferences[presetID] = preference
         saveSettings()
     }

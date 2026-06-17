@@ -1,0 +1,10 @@
+[
+  { "name": "경험치 쿠폰", "icon": "EXP_2", "icons": ["EXP_2", "EXP_3", "EXP_4"], "durations": [15, 30, 45, 60] },
+  { "name": "경험 축적의 비약", "icons": ["Exp_Nostrum"], "durations": [30, 120] },
+  { "name": "소형 경험 축적의 비약", "icons": ["SmallExp_Nostrum"], "durations": [30, 120] },
+  { "name": "소형 고농축 경험 축적의 비약", "icons": ["SmallStrongExp_Nostrum"], "durations": [30, 120] },
+  { "name": "익스트림 골드", "icons": ["ExtremeGold"] },
+  { "name": "아즈모스 영약", "icons": ["AzmothDrink"] },
+  { "name": "홀리 심볼", "icons": ["HollySimbol"] },
+  { "name": "VIP 부스트", "icons": ["VIP"] }
+]

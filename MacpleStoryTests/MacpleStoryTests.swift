@@ -463,7 +463,7 @@ struct MacpleStoryTests {
             pixelWidth: 32,
             pixelHeight: 32
         )
-        let entry = ExperienceBuffEntry(id: "경험치", iconTemplate: iconTemplate, iconName: "경험치")
+        let entry = ExperienceBuffEntry(id: "경험치", iconName: "경험치", variants: [BuffIconVariant(name: "경험치", iconTemplate: iconTemplate)])
         let iconRect = CGRect(x: 64, y: 36, width: 32, height: 32)
         let startedAt = Date()
         let cleanActiveFrame = ScreenCaptureFrame(
@@ -535,7 +535,7 @@ struct MacpleStoryTests {
             pixelWidth: 32,
             pixelHeight: 32
         )
-        let entry = ExperienceBuffEntry(id: "경험치", iconTemplate: iconTemplate, iconName: "경험치")
+        let entry = ExperienceBuffEntry(id: "경험치", iconName: "경험치", variants: [BuffIconVariant(name: "경험치", iconTemplate: iconTemplate)])
         let iconRect = CGRect(x: 64, y: 36, width: 32, height: 32)
         // 실제 버프 아이콘은 밝은 상태로 남은 시간 숫자만 덧그려진다.
         let frame = ScreenCaptureFrame(
@@ -570,7 +570,7 @@ struct MacpleStoryTests {
             pixelWidth: 32,
             pixelHeight: 32
         )
-        let entry = ExperienceBuffEntry(id: "경험치", iconTemplate: iconTemplate, iconName: "경험치")
+        let entry = ExperienceBuffEntry(id: "경험치", iconName: "경험치", variants: [BuffIconVariant(name: "경험치", iconTemplate: iconTemplate)])
         // 아이콘을 좌측(x 0.4~0.6)에 배치한다.
         let iconRect = CGRect(x: 64, y: 36, width: 32, height: 32)
         let frame = ScreenCaptureFrame(
@@ -599,6 +599,93 @@ struct MacpleStoryTests {
             try await fullScreen.detectExperienceBuffs(in: frame, entries: [entry]).first
         )
         #expect(fullResult.isActive == true)
+    }
+
+    @Test func buffCatalogBuildsGroupsFromManifest() async throws {
+        let template = SkillIconTemplate(pngData: Data([0x1]), pixelWidth: 1, pixelHeight: 1)
+        let templatesByStem = [
+            "EXP_2": template,
+            "EXP_3": template,
+            "EXP_4": template,
+            "VIP": template,
+            "Exp_Nostrum": template
+        ]
+        let manifest: [ExperienceBuffCatalog.ManifestEntry] = [
+            ExperienceBuffCatalog.ManifestEntry(name: "경험치 쿠폰", icon: "EXP_3", icons: ["EXP_2", "EXP_3", "EXP_4"]),
+            ExperienceBuffCatalog.ManifestEntry(name: "VIP", icons: ["VIP"]),
+            ExperienceBuffCatalog.ManifestEntry(name: "Exp_Nostrum", icons: ["Exp_Nostrum"])
+        ]
+
+        let presets = ExperienceBuffCatalog.buildPresets(
+            manifest: manifest,
+            templatesByStem: templatesByStem
+        )
+
+        // 매니페스트 순서/그룹 구성 그대로
+        #expect(presets.map(\.id) == ["경험치 쿠폰", "VIP", "Exp_Nostrum"])
+        #expect(presets[0].variants.map(\.name) == ["EXP_2", "EXP_3", "EXP_4"])
+        // 대표 아이콘은 매니페스트 icon 지정값(EXP_3), 미지정이면 첫 번째
+        #expect(presets[0].representativeVariant?.name == "EXP_3")
+        #expect(presets[1].representativeVariant?.name == "VIP")
+        #expect(presets[1].variants.count == 1)
+        #expect(presets[2].variants.count == 1)
+    }
+
+    @Test func buffCatalogFallsBackToSingletonsWithoutManifest() async throws {
+        let template = SkillIconTemplate(pngData: Data([0x1]), pixelWidth: 1, pixelHeight: 1)
+        let presets = ExperienceBuffCatalog.buildPresets(
+            manifest: nil,
+            templatesByStem: ["VIP": template, "AzmothDrink": template]
+        )
+
+        // 매니페스트 없으면 각 PNG가 단독 그룹(이름순)
+        #expect(presets.map(\.id) == ["AzmothDrink", "VIP"])
+        #expect(presets.allSatisfy { $0.variants.count == 1 })
+    }
+
+    @Test func experienceBuffDetectorMatchesAnyVariantInGroup() async throws {
+        // 그룹에 변형 두 개(미사용 데코이 + 실제 아이콘). 화면엔 실제 아이콘만 존재한다.
+        let realIcon = makeTestSkillIconImage(width: 32, height: 32)
+        let realTemplate = SkillIconTemplate(
+            pngData: try #require(pngData(from: realIcon)),
+            pixelWidth: 32,
+            pixelHeight: 32
+        )
+        // 화면에 없는 다른 모양의 변형 → 매칭되지 않아야 한다.
+        let decoyIcon = makeAltTestIconImage(width: 32, height: 32)
+        let decoyTemplate = SkillIconTemplate(
+            pngData: try #require(pngData(from: decoyIcon)),
+            pixelWidth: 32,
+            pixelHeight: 32
+        )
+        let entry = ExperienceBuffEntry(
+            id: "경험치버프",
+            iconName: "경험치버프",
+            variants: [
+                BuffIconVariant(name: "2배", iconTemplate: decoyTemplate),
+                BuffIconVariant(name: "3배", iconTemplate: realTemplate)
+            ]
+        )
+        let frame = ScreenCaptureFrame(
+            image: makeFrameImage(
+                width: 160,
+                height: 120,
+                iconImage: realIcon,
+                iconRect: CGRect(x: 64, y: 36, width: 32, height: 32),
+                isCooldown: false,
+                showsBuffMinuteOverlay: true,
+                buffDarkeningAlpha: 0.15
+            ),
+            capturedAt: Date()
+        )
+        let service = ExperienceBuffDetectionService(searchRegion: .fullScreen)
+
+        let result = try #require(
+            try await service.detectExperienceBuffs(in: frame, entries: [entry]).first
+        )
+
+        #expect(result.isActive == true)
+        #expect(result.matchedVariantName == "3배")
     }
 
     @Test func autoTriggerCoordinatorStartsDetectedTimerOnce() async throws {
@@ -663,7 +750,12 @@ struct MacpleStoryTests {
         let preset = ExperienceBuffPreset(
             id: "경험치",
             displayName: "경험치",
-            iconTemplate: SkillIconTemplate(pngData: Data([0x1]), pixelWidth: 1, pixelHeight: 1)
+            variants: [
+                BuffIconVariant(
+                    name: "경험치",
+                    iconTemplate: SkillIconTemplate(pngData: Data([0x1]), pixelWidth: 1, pixelHeight: 1)
+                )
+            ]
         )
         let experienceBuffStore = ExperienceBuffAlertStore(
             userDefaults: userDefaults,
@@ -731,6 +823,68 @@ struct MacpleStoryTests {
 
         #expect(alertService.experienceBuffExpiredCount == 1)
         #expect(coordinator.lastExperienceBuffAlertMessage == "경험치 꺼짐")
+    }
+
+    @Test func autoTriggerCoordinatorFiresFixedDurationAlertBeforeExpiry() async throws {
+        let alertService = NoopAlertNotificationService()
+        let timerStore = SkillTimerStore(alertNotificationService: alertService)
+        let suiteName = UUID().uuidString
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        userDefaults.removePersistentDomain(forName: suiteName)
+        let preset = ExperienceBuffPreset(
+            id: "쿠폰",
+            displayName: "쿠폰",
+            variants: [
+                BuffIconVariant(
+                    name: "EXP_2",
+                    iconTemplate: SkillIconTemplate(pngData: Data([0x1]), pixelWidth: 1, pixelHeight: 1)
+                )
+            ],
+            durationsMinutes: [1]
+        )
+        let store = ExperienceBuffAlertStore(userDefaults: userDefaults, presets: [preset])
+        store.setTracked(presetID: preset.id, isTracked: true)
+        store.setDuration(presetID: preset.id, minutes: 1) // 60초 → 45초 시점 알림
+
+        let frame = ScreenCaptureFrame(
+            image: makeTestImage(width: 1280, height: 720),
+            capturedAt: Date()
+        )
+        let startedAt = Date()
+        func activeResult(_ offset: TimeInterval) -> [ExperienceBuffDetectionResult] {
+            [
+                ExperienceBuffDetectionResult(
+                    entryID: preset.id,
+                    isActive: true,
+                    confidence: 0.9,
+                    detectedAt: startedAt.addingTimeInterval(offset),
+                    iconRegion: .fullScreen
+                )
+            ]
+        }
+        let coordinator = SkillAutoTriggerCoordinator(
+            screenCaptureService: StubScreenCaptureService(frame: frame),
+            skillDetectionService: StubSkillDetectionService(results: []),
+            experienceBuffDetectionService: StubExperienceBuffDetectionService(resultsSequence: [
+                activeResult(0),   // 감지 시작 → 45초 시점 예약
+                activeResult(44),  // 아직 전
+                activeResult(46)   // 45초 경과 → 발화
+            ])
+        )
+
+        coordinator.start()
+        try await coordinator.processOnce(using: [], timerStore: timerStore, experienceBuffStore: store)
+        try await coordinator.processOnce(using: [], timerStore: timerStore, experienceBuffStore: store)
+        #expect(alertService.experienceBuffExpiringCount == 0)
+
+        try await coordinator.processOnce(using: [], timerStore: timerStore, experienceBuffStore: store)
+        #expect(alertService.experienceBuffExpiringCount == 1)
+        #expect(alertService.lastExpiringName == "쿠폰")
+        #expect(alertService.lastExpiringSecondsLeft == 15)
+
+        // 계속 활성이어도 재발화하지 않음
+        try await coordinator.processOnce(using: [], timerStore: timerStore, experienceBuffStore: store)
+        #expect(alertService.experienceBuffExpiringCount == 1)
     }
 
     @Test func autoTriggerCoordinatorUsesUserSelectedWindowTarget() async throws {
@@ -889,6 +1043,9 @@ private final class NoopAlertNotificationService: AlertNotificationProviding {
     var preAlertTimerIDs: [SkillTimer.ID] = []
     var readyAlertTimerIDs: [SkillTimer.ID] = []
     var experienceBuffExpiredCount = 0
+    var experienceBuffExpiringCount = 0
+    var lastExpiringName: String?
+    var lastExpiringSecondsLeft: Int?
 
     func requestAuthorization() {}
 
@@ -902,6 +1059,12 @@ private final class NoopAlertNotificationService: AlertNotificationProviding {
 
     func notifyExperienceBuffExpired(name: String) {
         experienceBuffExpiredCount += 1
+    }
+
+    func notifyExperienceBuffExpiring(name: String, secondsLeft: Int) {
+        experienceBuffExpiringCount += 1
+        lastExpiringName = name
+        lastExpiringSecondsLeft = secondsLeft
     }
 
     func beginPopupPlacementSelection(
@@ -1088,6 +1251,35 @@ private func makeTestSkillIconImage(width: Int, height: Int) -> CGImage {
 
     guard let image = context?.makeImage() else {
         preconditionFailure("Failed to create test skill icon")
+    }
+
+    return image
+}
+
+/// makeTestSkillIconImage와 색·모양이 뚜렷이 다른 패턴 아이콘(데코이용).
+/// 분산이 있어 평면 퇴화 매칭을 피하면서 실제 아이콘과는 상관이 낮다.
+private func makeAltTestIconImage(width: Int, height: Int) -> CGImage {
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )
+
+    context?.setAllowsAntialiasing(false)
+    context?.setFillColor(CGColor(red: 0.95, green: 0.95, blue: 0.9, alpha: 1))
+    context?.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    context?.setFillColor(CGColor(red: 0.85, green: 0.2, blue: 0.15, alpha: 1))
+    context?.fillEllipse(in: CGRect(x: 6, y: 6, width: width - 12, height: height - 12))
+    context?.setFillColor(CGColor(red: 0.1, green: 0.3, blue: 0.75, alpha: 1))
+    context?.fill(CGRect(x: 0, y: height / 2 - 2, width: width, height: 4))
+
+    guard let image = context?.makeImage() else {
+        preconditionFailure("Failed to create alt test icon")
     }
 
     return image

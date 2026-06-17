@@ -315,7 +315,8 @@ private struct ExperienceBuffAlertSettingsView: View {
                         alertSounds: timerStore.alertSounds,
                         detectionResult: autoTriggerCoordinator.lastExperienceBuffDetectionResults
                             .first(where: { $0.entryID == preset.id }),
-                        captureSource: autoTriggerCoordinator.userSelectedCaptureSource
+                        captureSource: autoTriggerCoordinator.userSelectedCaptureSource,
+                        expiresAt: autoTriggerCoordinator.buffExpiryByEntryID[preset.id]
                     )
                 }
             }
@@ -331,12 +332,36 @@ private struct ExperienceBuffPresetRow: View {
     let alertSounds: [AlertSound]
     let detectionResult: ExperienceBuffDetectionResult?
     let captureSource: UserSelectedCaptureSource?
+    let expiresAt: Date?
 
     private var selectedAlertSoundID: Binding<String> {
         Binding(
             get: { preference.alertSoundID ?? "" },
             set: { experienceBuffStore.setAlertSound(presetID: preset.id, alertSoundID: $0.isEmpty ? nil : $0) }
         )
+    }
+
+    private var selectedDuration: Binding<Int> {
+        Binding(
+            get: {
+                experienceBuffStore.selectedDurationMinutes(for: preset)
+                    ?? preset.durationsMinutes.first
+                    ?? 0
+            },
+            set: { experienceBuffStore.setDuration(presetID: preset.id, minutes: $0) }
+        )
+    }
+
+    private func detectionStatusText(_ result: ExperienceBuffDetectionResult) -> String {
+        guard result.isActive else {
+            return "미감지"
+        }
+
+        let percent = Int(result.confidence * 100)
+        if let variant = result.matchedVariantName, variant != preset.displayName {
+            return "감지 중 · \(variant) · \(percent)%"
+        }
+        return "감지 중 · \(percent)%"
     }
 
     private var coordinateText: String? {
@@ -369,7 +394,8 @@ private struct ExperienceBuffPresetRow: View {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(.quaternary)
 
-                    if let image = NSImage(data: preset.iconTemplate.pngData) {
+                    if let pngData = preset.representativeVariant?.iconTemplate.pngData,
+                       let image = NSImage(data: pngData) {
                         Image(nsImage: image)
                             .resizable()
                             .interpolation(.none)
@@ -377,23 +403,37 @@ private struct ExperienceBuffPresetRow: View {
                             .padding(3)
                     }
                 }
-                .frame(width: 34, height: 34)
+                .frame(width: 36, height: 36)
                 .overlay(alignment: .bottomTrailing) {
                     if detectionResult?.isActive == true {
                         Circle()
                             .fill(.green)
-                            .frame(width: 8, height: 8)
+                            .frame(width: 9, height: 9)
                             .offset(x: 2, y: 2)
                     }
                 }
+                .opacity(preference.isTracked ? 1 : 0.4)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(preset.displayName)
-                        .font(.subheadline)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text(preset.displayName)
+                            .font(.subheadline)
+                            .lineLimit(1)
+
+                        if preset.variants.count > 1 {
+                            Text("변형 \(preset.variants.count)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .opacity(preference.isTracked ? 1 : 0.5)
+
+                    if preference.isTracked, let expiresAt {
+                        BuffCountdownView(expiresAt: expiresAt)
+                    }
 
                     if preference.isTracked, let result = detectionResult {
-                        Text(result.isActive ? "감지 중 · \(Int(result.confidence * 100))%" : "미감지")
+                        Text(detectionStatusText(result))
                             .font(.caption2)
                             .foregroundStyle(result.isActive ? .green : .secondary)
 
@@ -413,7 +453,18 @@ private struct ExperienceBuffPresetRow: View {
                     set: { experienceBuffStore.setTracked(presetID: preset.id, isTracked: $0) }
                 ))
                 .labelsHidden()
-                .help("이 버프 추적")
+                .toggleStyle(.switch)
+                .help(preference.isTracked ? "추적 켜짐 (끄려면 클릭)" : "추적 꺼짐 (켜려면 클릭)")
+            }
+
+            if preference.isTracked, preset.isFixedDuration {
+                Picker("지속시간", selection: selectedDuration) {
+                    ForEach(preset.durationsMinutes, id: \.self) { minutes in
+                        Text("\(minutes)분").tag(minutes)
+                    }
+                }
+                .font(.caption)
+                .help("이 시간 − 15초에 만료 알림")
             }
 
             if preference.isTracked, !alertSounds.isEmpty {
@@ -429,6 +480,24 @@ private struct ExperienceBuffPresetRow: View {
         }
         .padding(8)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// 시간 기반 버프의 남은 시간을 매초 갱신해 보여준다.
+private struct BuffCountdownView: View {
+    let expiresAt: Date
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let remaining = max(0, Int(expiresAt.timeIntervalSince(context.date).rounded()))
+
+            HStack(spacing: 4) {
+                Image(systemName: "hourglass")
+                Text(remaining > 0 ? "남은 시간 \(remaining.timerText)" : "만료됨")
+            }
+            .font(.system(.caption, design: .monospaced))
+            .foregroundStyle(remaining > 0 ? Color.orange : .secondary)
+        }
     }
 }
 
