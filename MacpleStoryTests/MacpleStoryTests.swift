@@ -846,11 +846,14 @@ struct MacpleStoryTests {
         store.setTracked(presetID: preset.id, isTracked: true)
         store.setDuration(presetID: preset.id, minutes: 1) // 60초 → 45초 시점 알림
 
-        let frame = ScreenCaptureFrame(
-            image: makeTestImage(width: 1280, height: 720),
-            capturedAt: Date()
-        )
+        // 프레임 타임스탬프로 시간을 흘려보낸다(코디네이터는 frame.capturedAt 기준).
         let startedAt = Date()
+        func frame(_ offset: TimeInterval) -> ScreenCaptureFrame {
+            ScreenCaptureFrame(
+                image: makeTestImage(width: 1280, height: 720),
+                capturedAt: startedAt.addingTimeInterval(offset)
+            )
+        }
         func activeResult(_ offset: TimeInterval) -> [ExperienceBuffDetectionResult] {
             [
                 ExperienceBuffDetectionResult(
@@ -863,12 +866,15 @@ struct MacpleStoryTests {
             ]
         }
         let coordinator = SkillAutoTriggerCoordinator(
-            screenCaptureService: StubScreenCaptureService(frame: frame),
+            screenCaptureService: SequencedScreenCaptureService(frames: [
+                frame(0),   // 감지 → 45초 시점 예약, 만료 60초
+                frame(44),  // 타이머 진행(감지 건너뜀), 아직 전
+                frame(46)   // 45초 경과 → 발화
+            ]),
             skillDetectionService: StubSkillDetectionService(results: []),
+            // 첫 사이클에만 호출됨(이후 타이머 구간은 매칭 건너뜀)
             experienceBuffDetectionService: StubExperienceBuffDetectionService(resultsSequence: [
-                activeResult(0),   // 감지 시작 → 45초 시점 예약
-                activeResult(44),  // 아직 전
-                activeResult(46)   // 45초 경과 → 발화
+                activeResult(0)
             ])
         )
 
@@ -882,7 +888,7 @@ struct MacpleStoryTests {
         #expect(alertService.lastExpiringName == "쿠폰")
         #expect(alertService.lastExpiringSecondsLeft == 15)
 
-        // 계속 활성이어도 재발화하지 않음
+        // 계속 진행해도 재발화하지 않음
         try await coordinator.processOnce(using: [], timerStore: timerStore, experienceBuffStore: store)
         #expect(alertService.experienceBuffExpiringCount == 1)
     }
@@ -1129,6 +1135,34 @@ private enum StubCaptureError: LocalizedError {
 
     var errorDescription: String? {
         "직접 선택한 창이 없습니다."
+    }
+}
+
+/// 호출할 때마다 다음 프레임을 반환(마지막은 반복). 시간 경과 시뮬레이션용.
+private final class SequencedScreenCaptureService: ScreenCaptureProviding {
+    private let frames: [ScreenCaptureFrame]
+    private var currentIndex = 0
+    let hasScreenCapturePermission = true
+
+    init(frames: [ScreenCaptureFrame]) {
+        self.frames = frames
+    }
+
+    func requestScreenCapturePermissionIfNeeded() -> Bool { true }
+
+    func requestUserSelectedWindow() async throws -> UserSelectedCaptureSource {
+        UserSelectedCaptureSource(
+            displayName: "Stub",
+            contentRect: CGRect(x: 0, y: 0, width: 1280, height: 720),
+            pointPixelScale: 1
+        )
+    }
+
+    func captureFrame() async throws -> ScreenCaptureFrame? {
+        guard !frames.isEmpty else { return nil }
+        let frame = frames[min(currentIndex, frames.count - 1)]
+        currentIndex += 1
+        return frame
     }
 }
 

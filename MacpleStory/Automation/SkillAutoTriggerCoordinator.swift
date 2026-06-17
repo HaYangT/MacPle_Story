@@ -266,35 +266,43 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
             return
         }
 
-        let results = try await experienceBuffDetectionService.detectExperienceBuffs(
-            in: frame,
-            entries: activeEntries
-        )
-
-        lastExperienceBuffDetectionResults = results
-
         pruneExperienceBuffStateCache(keeping: activeEntries.map(\.id))
+
+        let now = frame.capturedAt
+
+        // 타이머가 돌고 있는 시간 기반 버프는 매칭을 건너뛴다(효율).
+        // 만료 시각까지는 결과가 뻔하므로 시계만으로 처리한다.
+        let timingEntries = activeEntries.filter { isFixedDurationTimerRunning($0) }
+        let timingIDs = Set(timingEntries.map(\.id))
+        let entriesToDetect = activeEntries.filter { !timingIDs.contains($0.id) }
+
+        let detectedResults = entriesToDetect.isEmpty
+            ? []
+            : try await experienceBuffDetectionService.detectExperienceBuffs(
+                in: frame,
+                entries: entriesToDetect
+            )
 
         var expiredEntryNames: [String] = []
         var expiringEntryNames: [String] = []
 
-        for result in results {
-            guard let entry = activeEntries.first(where: { $0.id == result.entryID }) else {
+        // 1) 매칭한 버프 처리
+        for result in detectedResults {
+            guard let entry = entriesToDetect.first(where: { $0.id == result.entryID }) else {
                 continue
             }
 
             if let durationSeconds = entry.durationSeconds {
-                // 시간 기반: 감지되면 (지속시간 − 15초) 뒤에 한 번 알림.
-                if handleFixedDurationAlert(
+                if handleFixedDuration(
                     entry: entry,
-                    result: result,
+                    isActive: result.isActive,
                     durationSeconds: durationSeconds,
+                    now: now,
                     timerStore: timerStore
                 ) {
                     expiringEntryNames.append(entry.iconName)
                 }
             } else {
-                // 사라지면 알림(기존 방식).
                 let currentState = buffTrackingStateByEntryID[result.entryID] ?? .waitingForActivation
                 let (nextState, didExpire) = currentState.transition(
                     isActive: result.isActive,
@@ -310,34 +318,69 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
             }
         }
 
+        // 2) 타이머 진행 중인 버프: 매칭 없이 시계로만 발화/만료 처리
+        var timingResults: [ExperienceBuffDetectionResult] = []
+        for entry in timingEntries {
+            guard let durationSeconds = entry.durationSeconds else {
+                continue
+            }
+
+            if handleFixedDuration(
+                entry: entry,
+                isActive: true,
+                durationSeconds: durationSeconds,
+                now: now,
+                timerStore: timerStore
+            ) {
+                expiringEntryNames.append(entry.iconName)
+            }
+
+            // 타이머가 아직 살아있으면 UI에 "활성"으로 표시
+            if buffFixedDurationStateByEntryID[entry.id]?.scheduledFireAt != nil {
+                timingResults.append(
+                    ExperienceBuffDetectionResult(
+                        entryID: entry.id,
+                        isActive: true,
+                        confidence: 1,
+                        detectedAt: now,
+                        iconRegion: nil
+                    )
+                )
+            }
+        }
+
+        lastExperienceBuffDetectionResults = detectedResults + timingResults
+
         updateExperienceBuffMessage(
-            results: results,
+            results: lastExperienceBuffDetectionResults,
             expiredEntryNames: expiredEntryNames,
             expiringEntryNames: expiringEntryNames
         )
     }
 
+    /// 시간 기반 버프의 타이머가 진행 중인지(= 감지 후 만료 전). 이 동안은 매칭을 건너뛴다.
+    private func isFixedDurationTimerRunning(_ entry: ExperienceBuffEntry) -> Bool {
+        entry.durationSeconds != nil
+            && buffFixedDurationStateByEntryID[entry.id]?.scheduledFireAt != nil
+    }
+
     /// 시간 기반 버프 처리. 알림을 이번에 발화했으면 true.
-    private func handleFixedDurationAlert(
+    /// 감지 시 타이머 예약, (지속시간 − 15초)에 1회 알림, 만료 시각이 지나면 초기화(→ 다음 감지 재개).
+    private func handleFixedDuration(
         entry: ExperienceBuffEntry,
-        result: ExperienceBuffDetectionResult,
+        isActive: Bool,
         durationSeconds: Int,
+        now: Date,
         timerStore: SkillTimerStore
     ) -> Bool {
         var state = buffFixedDurationStateByEntryID[entry.id] ?? FixedDurationAlertState()
-        let now = result.detectedAt
 
-        if result.isActive {
-            state.missingFrames = 0
-            if state.scheduledFireAt == nil {
-                // 감지 시작 → 알림 예약 + 만료 시각 기록
-                let lead = TimeInterval(max(0, durationSeconds - fixedDurationAlertLeadSeconds))
-                state.scheduledFireAt = now.addingTimeInterval(lead)
-                state.didFire = false
-                buffExpiryByEntryID[entry.id] = now.addingTimeInterval(TimeInterval(durationSeconds))
-            }
-        } else if state.scheduledFireAt != nil {
-            state.missingFrames += 1
+        if isActive, state.scheduledFireAt == nil {
+            // 감지 시작 → 알림 예약 + 만료 시각 기록
+            let lead = TimeInterval(max(0, durationSeconds - fixedDurationAlertLeadSeconds))
+            state.scheduledFireAt = now.addingTimeInterval(lead)
+            state.didFire = false
+            buffExpiryByEntryID[entry.id] = now.addingTimeInterval(TimeInterval(durationSeconds))
         }
 
         var didFireNow = false
@@ -351,10 +394,8 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
             )
         }
 
-        // 버프가 확실히 사라졌으면 초기화 → 다음 사용 시 재예약
-        if !result.isActive,
-           state.scheduledFireAt != nil,
-           state.missingFrames >= experienceBuffMissingFrameThreshold {
+        // 만료 시각 경과 → 초기화. 다음 사이클부터 다시 감지(재사용 대응).
+        if let expiry = buffExpiryByEntryID[entry.id], now >= expiry {
             state = FixedDurationAlertState()
             buffExpiryByEntryID[entry.id] = nil
         }

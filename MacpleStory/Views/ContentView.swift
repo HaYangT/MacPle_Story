@@ -415,33 +415,29 @@ private struct ExperienceBuffPresetRow: View {
                 .opacity(preference.isTracked ? 1 : 0.4)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text(preset.displayName)
-                            .font(.subheadline)
-                            .lineLimit(1)
+                    Text(preset.displayName)
+                        .font(.subheadline)
+                        .lineLimit(1)
+                        .opacity(preference.isTracked ? 1 : 0.5)
 
-                        if preset.variants.count > 1 {
-                            Text("변형 \(preset.variants.count)")
+                    if preference.isTracked {
+                        if let expiresAt {
+                            // 타이머 진행 중 — 이 동안은 매칭을 멈춘다.
+                            BuffCountdownView(expiresAt: expiresAt)
+                            Text("감지 일시중지")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
-                        }
-                    }
-                    .opacity(preference.isTracked ? 1 : 0.5)
+                        } else if let result = detectionResult {
+                            Text(detectionStatusText(result))
+                                .font(.caption2)
+                                .foregroundStyle(result.isActive ? .green : .secondary)
 
-                    if preference.isTracked, let expiresAt {
-                        BuffCountdownView(expiresAt: expiresAt)
-                    }
-
-                    if preference.isTracked, let result = detectionResult {
-                        Text(detectionStatusText(result))
-                            .font(.caption2)
-                            .foregroundStyle(result.isActive ? .green : .secondary)
-
-                        if let coordinateText {
-                            Text(coordinateText)
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                            if let coordinateText {
+                                Text(coordinateText)
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
                         }
                     }
                 }
