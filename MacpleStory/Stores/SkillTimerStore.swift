@@ -170,6 +170,10 @@ final class SkillTimerStore: ObservableObject {
         alertNotificationService.notifyExperienceBuffExpired(name: name)
     }
 
+    func notifyExperienceBuffExpiring(name: String, secondsLeft: Int) {
+        alertNotificationService.notifyExperienceBuffExpiring(name: name, secondsLeft: secondsLeft)
+    }
+
     func removeTimer(id: SkillTimer.ID) {
         skillTimers.removeAll { $0.id == id }
         stopTickerIfIdle()
