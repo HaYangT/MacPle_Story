@@ -1,0 +1,4 @@
+tap.db
+.lock
+*.tmp.*
+.DS_Store

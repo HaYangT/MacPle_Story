@@ -1,2 +1,12 @@
 .build/
 DerivedData/
+
+# Local agent/runtime config
+.mcp.json
+.tap-comms/
+.tmp/
+tap-config.local.json
+
+# tap-comms runtime state
+tap-comms/.claims/
+tap-comms/heartbeats.json
