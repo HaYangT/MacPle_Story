@@ -563,6 +563,36 @@ struct MacpleStoryTests {
         #expect(result.confidence >= 0.35)
     }
 
+    @Test func experienceBuffDetectorMatchesTransparentTemplateOnWhiteSlotBackground() async throws {
+        let iconImage = makeTransparentBuffIconImage(width: 32, height: 32)
+        let iconTemplate = SkillIconTemplate(
+            pngData: try #require(pngData(from: iconImage)),
+            pixelWidth: 32,
+            pixelHeight: 32
+        )
+        let entry = ExperienceBuffEntry(id: "투명버프", iconName: "투명버프", variants: [BuffIconVariant(name: "투명버프", iconTemplate: iconTemplate)])
+        let frame = ScreenCaptureFrame(
+            image: makeFrameImage(
+                width: 160,
+                height: 120,
+                iconImage: iconImage,
+                iconRect: CGRect(x: 120, y: 84, width: 32, height: 32),
+                iconBackgroundColor: CGColor(gray: 1, alpha: 1),
+                isCooldown: false
+            ),
+            capturedAt: Date()
+        )
+        let service = ExperienceBuffDetectionService()
+
+        let result = try #require(
+            try await service.detectExperienceBuffs(in: frame, entries: [entry]).first
+        )
+
+        #expect(result.isActive == true)
+        #expect(result.confidence >= 0.75)
+        #expect(result.iconRegion?.x ?? 0 > 0.65)
+    }
+
     @Test func experienceBuffDetectorIgnoresIconOutsideSearchRegion() async throws {
         let iconImage = makeTestSkillIconImage(width: 32, height: 32)
         let iconTemplate = SkillIconTemplate(
@@ -1327,11 +1357,39 @@ private func makeAltTestIconImage(width: Int, height: Int) -> CGImage {
     return image
 }
 
+private func makeTransparentBuffIconImage(width: Int, height: Int) -> CGImage {
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )
+
+    context?.setAllowsAntialiasing(false)
+    context?.clear(CGRect(x: 0, y: 0, width: width, height: height))
+    context?.setFillColor(CGColor(red: 0.0, green: 0.72, blue: 1.0, alpha: 1))
+    context?.fillEllipse(in: CGRect(x: 7, y: 5, width: width - 14, height: height - 10))
+    context?.setFillColor(CGColor(red: 0.95, green: 1.0, blue: 1.0, alpha: 1))
+    context?.fill(CGRect(x: 14, y: 8, width: 4, height: height - 16))
+    context?.fill(CGRect(x: 8, y: 14, width: width - 16, height: 4))
+
+    guard let image = context?.makeImage() else {
+        preconditionFailure("Failed to create transparent buff icon")
+    }
+
+    return image
+}
+
 private func makeFrameImage(
     width: Int,
     height: Int,
     iconImage: CGImage,
     iconRect: CGRect,
+    iconBackgroundColor: CGColor? = nil,
     isCooldown: Bool,
     showsTimeOverlay: Bool = false,
     showsBuffMinuteOverlay: Bool = false,
@@ -1354,6 +1412,10 @@ private func makeFrameImage(
     context?.setFillColor(CGColor(gray: 0.1, alpha: 1))
     context?.fill(CGRect(x: 0, y: height - 48, width: width, height: 48))
     context?.interpolationQuality = .none
+    if let iconBackgroundColor {
+        context?.setFillColor(iconBackgroundColor)
+        context?.fill(iconRect)
+    }
     context?.draw(iconImage, in: iconRect)
 
     if buffDarkeningAlpha > 0 {
