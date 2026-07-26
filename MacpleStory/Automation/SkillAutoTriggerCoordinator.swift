@@ -49,7 +49,7 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
         self.skillDetectionService = SkillDetectionService()
         self.experienceBuffDetectionService = ExperienceBuffDetectionService()
         self.resolutionDetector = MapleStoryResolutionDetector()
-        self.detectionInterval = 0.35
+        self.detectionInterval = 5.0
         self.triggerLockout = 1.5
         self.experienceBuffMissingFrameThreshold = 3
     }
@@ -124,6 +124,27 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
         }
     }
 
+    /// 메이플 창을 자동 감지해 캡처 대상으로 설정한다. 성공하면 true.
+    @discardableResult
+    func autoDetectMapleWindow() async -> Bool {
+        guard !isPresentingCapturePicker else {
+            return false
+        }
+
+        do {
+            let source = try await screenCaptureService.autoDetectMapleWindow()
+            userSelectedCaptureSource = source
+            lastDetectedResolution = nil
+            lastDetectedResult = nil
+            lastErrorMessage = nil
+            lastWindowRefreshMessage = "자동 감지: \(source.displayName) · \(source.sizeText)"
+            return true
+        } catch {
+            lastWindowRefreshMessage = "메이플 창 자동 감지 실패 · 직접 선택해 주세요"
+            return false
+        }
+    }
+
     func startMonitoring(
         timerStore: SkillTimerStore,
         ruleStore: SkillDetectionRuleStore,
@@ -138,7 +159,11 @@ final class SkillAutoTriggerCoordinator: ObservableObject {
         }
 
         if userSelectedCaptureSource == nil {
-            await requestUserSelectedWindow()
+            // 먼저 메이플 창 자동 감지를 시도하고, 실패하면 수동 선택으로 폴백.
+            let didAutoDetect = await autoDetectMapleWindow()
+            if !didAutoDetect {
+                await requestUserSelectedWindow()
+            }
         }
 
         guard userSelectedCaptureSource != nil else {

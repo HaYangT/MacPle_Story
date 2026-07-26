@@ -18,7 +18,25 @@ protocol ScreenCaptureProviding {
     func requestScreenCapturePermissionIfNeeded() -> Bool
 
     @MainActor func requestUserSelectedWindow() async throws -> UserSelectedCaptureSource
+    /// 열린 창 목록에서 메이플스토리 창을 찾아 자동으로 캡처 대상으로 선택한다.
+    /// 찾지 못하면 `MapleWindowDetectionError.notFound`를 던진다.
+    @MainActor func autoDetectMapleWindow() async throws -> UserSelectedCaptureSource
     func captureFrame() async throws -> ScreenCaptureFrame?
+}
+
+extension ScreenCaptureProviding {
+    /// 기본 구현: 자동 감지를 지원하지 않는 구현(테스트 스텁 등)은 실패로 처리한다.
+    func autoDetectMapleWindow() async throws -> UserSelectedCaptureSource {
+        throw MapleWindowDetectionError.notFound
+    }
+}
+
+enum MapleWindowDetectionError: LocalizedError {
+    case notFound
+
+    var errorDescription: String? {
+        "메이플스토리 창을 찾지 못했습니다. 게임이 실행 중인지 확인하거나 창을 직접 선택해 주세요."
+    }
 }
 
 final class ScreenCaptureService: ScreenCaptureProviding {
@@ -90,6 +108,77 @@ final class ScreenCaptureService: ScreenCaptureProviding {
                 picker.present(using: .window)
             }
         }
+    }
+
+    @MainActor
+    func autoDetectMapleWindow() async throws -> UserSelectedCaptureSource {
+        guard requestScreenCapturePermissionIfNeeded() else {
+            throw ScreenCaptureError.screenRecordingPermissionRequired(
+                appPath: Bundle.main.bundlePath
+            )
+        }
+
+        let content = try await SCShareableContent.excludingDesktopWindows(
+            false,
+            onScreenWindowsOnly: true
+        )
+
+        guard let window = Self.bestMapleWindow(in: content.windows) else {
+            throw MapleWindowDetectionError.notFound
+        }
+
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        userSelectedFilter = filter
+        return Self.userSelectedCaptureSource(from: filter)
+    }
+
+    /// 메이플로 추정되는 창을 찾을 때 쓰는 키워드. 앞쪽일수록 우선순위가 높다.
+    /// (Wine으로 실행 시 창 제목/프로세스명이 `MapleStory.exe`로 나오는 경우를 우선 감지)
+    private static let mapleWindowKeywords = [
+        "maplestory.exe",
+        "maplestory",
+        "메이플스토리",
+        "메이플",
+        "maple"
+    ]
+
+    private static func bestMapleWindow(in windows: [SCWindow]) -> SCWindow? {
+        let ownBundleID = Bundle.main.bundleIdentifier
+
+        let candidates = windows.compactMap { window -> (window: SCWindow, priority: Int, area: CGFloat)? in
+            guard window.isOnScreen else {
+                return nil
+            }
+
+            guard window.frame.width >= 200, window.frame.height >= 200 else {
+                return nil
+            }
+
+            if let bundleID = window.owningApplication?.bundleIdentifier,
+               bundleID == ownBundleID {
+                return nil
+            }
+
+            let haystacks = [window.title, window.owningApplication?.applicationName]
+                .compactMap { $0?.lowercased() }
+
+            guard let priority = mapleWindowKeywords.firstIndex(where: { keyword in
+                haystacks.contains { $0.contains(keyword) }
+            }) else {
+                return nil
+            }
+
+            return (window, priority, window.frame.width * window.frame.height)
+        }
+
+        // 우선순위가 높은(인덱스가 작은) 창 우선, 같은 우선순위면 가장 큰 창.
+        return candidates.min { lhs, rhs in
+            if lhs.priority != rhs.priority {
+                return lhs.priority < rhs.priority
+            }
+
+            return lhs.area > rhs.area
+        }?.window
     }
 
     func captureFrame() async throws -> ScreenCaptureFrame? {

@@ -17,6 +17,8 @@ struct SkillTimer: Identifiable, Codable, Equatable {
     var didSendPreAlert: Bool
     var preAlertSoundID: String?
     var readyAlertSoundID: String?
+    /// 이 스킬 전용 알림 색상. nil이면 전역 알림 색상을 사용한다.
+    var alertColor: AlertColor?
 
     init(
         id: UUID = UUID(),
@@ -27,7 +29,8 @@ struct SkillTimer: Identifiable, Codable, Equatable {
         isRunning: Bool = false,
         didSendPreAlert: Bool = false,
         preAlertSoundID: String? = nil,
-        readyAlertSoundID: String? = nil
+        readyAlertSoundID: String? = nil,
+        alertColor: AlertColor? = nil
     ) {
         self.id = id
         self.name = name
@@ -38,5 +41,6 @@ struct SkillTimer: Identifiable, Codable, Equatable {
         self.didSendPreAlert = didSendPreAlert
         self.preAlertSoundID = preAlertSoundID
         self.readyAlertSoundID = readyAlertSoundID
+        self.alertColor = alertColor
     }
 }

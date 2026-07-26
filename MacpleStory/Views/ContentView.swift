@@ -26,6 +26,7 @@ struct ContentView: View {
     @EnvironmentObject private var ruleStore: SkillDetectionRuleStore
     @EnvironmentObject private var autoTriggerCoordinator: SkillAutoTriggerCoordinator
     @State private var selectedTab: AppTab = .skillTimer
+    @State private var isShowingSettings = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -89,6 +90,20 @@ struct ContentView: View {
                 runningCount: timerStore.runningTimerCount,
                 totalCount: timerStore.skillTimers.count
             )
+
+            Button {
+                isShowingSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.title3)
+            }
+            .buttonStyle(.borderless)
+            .help("설정")
+            .popover(isPresented: $isShowingSettings, arrowEdge: .bottom) {
+                SettingsView()
+                    .environmentObject(timerStore)
+                    .environmentObject(autoTriggerCoordinator)
+            }
         }
     }
 
@@ -117,10 +132,6 @@ private struct SkillTimerTabView: View {
         Divider()
 
         AutoTriggerControlView()
-
-        Divider()
-
-        AlertSettingsView()
     }
 }
 
@@ -133,10 +144,6 @@ private struct BuffAlertTabView: View {
         Divider()
 
         ExperienceBuffAlertSettingsView()
-
-        Divider()
-
-        AlertSettingsView()
     }
 }
 
@@ -186,31 +193,17 @@ private struct AutoTriggerControlView: View {
                 .tint(autoTriggerCoordinator.isRunning ? .red : .accentColor)
             }
 
-            HStack(spacing: 8) {
-                Text(captureSourceText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Button {
-                    selectWindow()
-                } label: {
-                    Label(
-                        autoTriggerCoordinator.isPresentingCapturePicker ? "선택 중" : "창 선택",
-                        systemImage: "cursorarrow.click"
-                    )
-                }
-                .buttonStyle(.bordered)
-                .disabled(autoTriggerCoordinator.isPresentingCapturePicker)
-                .help("메이플스토리 창 직접 선택")
-            }
+            Text(captureSourceText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     private var captureSourceText: String {
         guard let source = autoTriggerCoordinator.userSelectedCaptureSource else {
-            return "캡처 창 미선택"
+            return "캡처 창 미선택 · 설정에서 선택"
         }
         return "\(source.displayName) · \(source.sizeText)"
     }
@@ -264,12 +257,6 @@ private struct AutoTriggerControlView: View {
                     experienceBuffStore: experienceBuffStore
                 )
             }
-        }
-    }
-
-    private func selectWindow() {
-        Task {
-            await autoTriggerCoordinator.requestUserSelectedWindow()
         }
     }
 }
@@ -498,6 +485,88 @@ private struct BuffCountdownView: View {
     }
 }
 
+// MARK: - 설정 (톱니바퀴)
+
+private struct SettingsView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("설정")
+                    .font(.title3.bold())
+
+                CaptureSourceSettingsView()
+
+                Divider()
+
+                AlertSettingsView()
+            }
+            .padding(16)
+        }
+        .frame(width: 360, height: 460)
+    }
+}
+
+// MARK: - 창 감지 설정
+
+private struct CaptureSourceSettingsView: View {
+    @EnvironmentObject private var autoTriggerCoordinator: SkillAutoTriggerCoordinator
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("창 감지")
+                .font(.headline)
+
+            Text(captureSourceText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 8) {
+                Button {
+                    autoDetectWindow()
+                } label: {
+                    Label("자동 감지", systemImage: "sparkles.tv")
+                }
+                .buttonStyle(.bordered)
+                .disabled(autoTriggerCoordinator.isPresentingCapturePicker)
+                .help("열린 창에서 메이플스토리 창을 자동으로 찾습니다")
+
+                Button {
+                    selectWindow()
+                } label: {
+                    Label(
+                        autoTriggerCoordinator.isPresentingCapturePicker ? "선택 중" : "창 선택",
+                        systemImage: "cursorarrow.click"
+                    )
+                }
+                .buttonStyle(.bordered)
+                .disabled(autoTriggerCoordinator.isPresentingCapturePicker)
+                .help("메이플스토리 창 직접 선택")
+            }
+        }
+    }
+
+    private var captureSourceText: String {
+        guard let source = autoTriggerCoordinator.userSelectedCaptureSource else {
+            return "캡처 창 미선택 · 자동 감지 또는 창 선택을 누르세요"
+        }
+        return "\(source.displayName) · \(source.sizeText)"
+    }
+
+    private func autoDetectWindow() {
+        Task {
+            await autoTriggerCoordinator.autoDetectMapleWindow()
+        }
+    }
+
+    private func selectWindow() {
+        Task {
+            await autoTriggerCoordinator.requestUserSelectedWindow()
+        }
+    }
+}
+
 // MARK: - 알림 설정
 
 private struct AlertSettingsView: View {
@@ -521,6 +590,87 @@ private struct AlertSettingsView: View {
                     timerStore.beginAlertPopupPlacementSelection()
                 } label: {
                     Label("위치 설정", systemImage: "location.viewfinder")
+                }
+            }
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("알림 표시 화면")
+                        .font(.headline)
+
+                    Text("메이플과 다른 모니터(예: 넷플릭스 화면)를 고르면 그곳에 알림이 뜹니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Picker(
+                    "알림 표시 화면",
+                    selection: Binding(
+                        get: { timerStore.alertTargetDisplayID },
+                        set: { timerStore.updateAlertTargetDisplay($0) }
+                    )
+                ) {
+                    ForEach(timerStore.availableAlertDisplays) { display in
+                        Text(display.name).tag(display.id)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 200)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("알림 방식")
+                    .font(.headline)
+
+                Picker("알림 방식", selection: Binding(
+                    get: { timerStore.alertPresentationStyle },
+                    set: { newValue in
+                        // 세그먼트 Picker가 뷰 업데이트 도중 set을 호출할 수 있어,
+                        // @Published 변경을 다음 런루프로 미뤄 "Publishing changes from
+                        // within view updates" 경고를 피한다.
+                        DispatchQueue.main.async {
+                            timerStore.updateAlertPresentationStyle(newValue)
+                        }
+                    }
+                )) {
+                    ForEach(AlertPresentationStyle.allCases) { style in
+                        Text(style.displayName).tag(style)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                Text("알림창은 팝업 박스, 점등형은 화면 테두리 깜빡임입니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("알림 색상")
+                        .font(.headline)
+
+                    Text("팝업 박스 배경과 테두리 점등에 함께 적용됩니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(timerStore.alertAccentColor.color)
+                    .frame(width: 28, height: 20)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color.secondary.opacity(0.4))
+                    )
+
+                Button {
+                    timerStore.beginAlertAccentColorSelection()
+                } label: {
+                    Label("색상 설정", systemImage: "paintpalette")
                 }
             }
 

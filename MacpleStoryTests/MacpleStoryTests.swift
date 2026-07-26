@@ -1084,6 +1084,9 @@ struct MacpleStoryTests {
 
 private final class NoopAlertNotificationService: AlertNotificationProviding {
     var popupPlacement: AlertPopupPlacement = .defaultValue
+    var targetDisplayID: CGDirectDisplayID = AlertTargetDisplay.mainDisplayID
+    var presentationStyle: AlertPresentationStyle = .defaultValue
+    var accentColor: AlertColor = .defaultValue
     var preAlertTimerIDs: [SkillTimer.ID] = []
     var readyAlertTimerIDs: [SkillTimer.ID] = []
     var experienceBuffExpiredCount = 0
@@ -1114,6 +1117,11 @@ private final class NoopAlertNotificationService: AlertNotificationProviding {
     func beginPopupPlacementSelection(
         initialPlacement: AlertPopupPlacement,
         completion: @escaping (AlertPopupPlacement) -> Void
+    ) {}
+
+    func beginAccentColorSelection(
+        initialColor: AlertColor,
+        completion: @escaping (AlertColor) -> Void
     ) {}
 }
 

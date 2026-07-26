@@ -18,6 +18,12 @@ struct SkillTimerRowView: View {
                 .foregroundStyle(skillTimer.isRunning ? .green : .secondary)
                 .frame(width: 20)
 
+            Circle()
+                .fill(effectiveAlertColor)
+                .frame(width: 12, height: 12)
+                .overlay(Circle().strokeBorder(Color.secondary.opacity(0.4)))
+                .help(skillTimer.alertColor == nil ? "전역 알림 색상 사용 중" : "이 스킬 전용 알림 색상")
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(skillTimer.name)
                     .font(.headline)
@@ -35,6 +41,24 @@ struct SkillTimerRowView: View {
                 .frame(width: 54, alignment: .trailing)
 
             HStack(spacing: 4) {
+                Menu {
+                    Button("색상 설정") {
+                        timerStore.beginSkillAlertColorSelection(id: skillTimer.id)
+                    }
+
+                    if skillTimer.alertColor != nil {
+                        Button("기본 색으로") {
+                            timerStore.resetSkillAlertColor(id: skillTimer.id)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "paintpalette")
+                        .frame(width: 18, height: 18)
+                }
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("알림 색상")
+
                 Button {
                     timerStore.toggleTimer(id: skillTimer.id)
                 } label: {
@@ -63,6 +87,10 @@ struct SkillTimerRowView: View {
         }
         .padding(10)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var effectiveAlertColor: Color {
+        skillTimer.alertColor?.color ?? timerStore.alertAccentColor.color
     }
 
     private var detailText: String {

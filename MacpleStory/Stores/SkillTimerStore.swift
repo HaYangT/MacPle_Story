@@ -5,6 +5,7 @@
 //  Created by Hayangt on 6/12/26.
 //
 
+import AppKit
 import Combine
 import Foundation
 
@@ -13,6 +14,12 @@ final class SkillTimerStore: ObservableObject {
     @Published private(set) var alertSounds: [AlertSound] = []
     @Published private(set) var alertPopupPlacement: AlertPopupPlacement
     @Published private(set) var alertVolume: Double
+    /// 알림 팝업을 띄울 대상 디스플레이 ID. 0이면 주 화면(자동).
+    @Published private(set) var alertTargetDisplayID: CGDirectDisplayID
+    /// 알림 표시 방식(알림창 / 점등형 / 둘 다).
+    @Published private(set) var alertPresentationStyle: AlertPresentationStyle
+    /// 팝업 박스/테두리 점등에 쓰는 사용자 지정 색상.
+    @Published private(set) var alertAccentColor: AlertColor
     @Published var alertSoundImportErrorMessage: String?
 
     private let alertSoundService: AlertSoundService
@@ -21,6 +28,9 @@ final class SkillTimerStore: ObservableObject {
     private var tickerCancellable: AnyCancellable?
     private static let alertPopupPlacementDefaultsKey = "alertPopupPlacement"
     private static let alertVolumeDefaultsKey = "alertVolume"
+    private static let alertTargetDisplayDefaultsKey = "alertTargetDisplayID"
+    private static let alertPresentationStyleDefaultsKey = "alertPresentationStyle"
+    private static let alertAccentColorDefaultsKey = "alertAccentColor"
 
     init(
         alertSoundService: AlertSoundService = AlertSoundService(),
@@ -32,7 +42,13 @@ final class SkillTimerStore: ObservableObject {
         self.userDefaults = userDefaults
         self.alertPopupPlacement = Self.loadAlertPopupPlacement(from: userDefaults)
         self.alertVolume = Self.loadAlertVolume(from: userDefaults)
+        self.alertTargetDisplayID = Self.loadAlertTargetDisplayID(from: userDefaults)
+        self.alertPresentationStyle = Self.loadAlertPresentationStyle(from: userDefaults)
+        self.alertAccentColor = Self.loadAlertAccentColor(from: userDefaults)
         self.alertNotificationService.popupPlacement = alertPopupPlacement
+        self.alertNotificationService.targetDisplayID = alertTargetDisplayID
+        self.alertNotificationService.presentationStyle = alertPresentationStyle
+        self.alertNotificationService.accentColor = alertAccentColor
         self.alertSoundService.updateVolume(alertVolume)
         reloadAlertSounds()
     }
@@ -97,6 +113,58 @@ final class SkillTimerStore: ObservableObject {
         alertPopupPlacement = placement
         alertNotificationService.popupPlacement = placement
         saveAlertPopupPlacement(placement)
+    }
+
+    /// 현재 연결된 디스플레이 목록(주 화면 자동 옵션 포함). 설정 피커에 사용.
+    var availableAlertDisplays: [AlertTargetDisplay] {
+        AlertTargetDisplay.availableDisplays()
+    }
+
+    func updateAlertTargetDisplay(_ displayID: CGDirectDisplayID) {
+        alertTargetDisplayID = displayID
+        alertNotificationService.targetDisplayID = displayID
+        userDefaults.set(Int(displayID), forKey: Self.alertTargetDisplayDefaultsKey)
+    }
+
+    func updateAlertPresentationStyle(_ style: AlertPresentationStyle) {
+        alertPresentationStyle = style
+        alertNotificationService.presentationStyle = style
+        userDefaults.set(style.rawValue, forKey: Self.alertPresentationStyleDefaultsKey)
+    }
+
+    func beginAlertAccentColorSelection() {
+        alertNotificationService.beginAccentColorSelection(
+            initialColor: alertAccentColor
+        ) { [weak self] accentColor in
+            self?.updateAlertAccentColor(accentColor)
+        }
+    }
+
+    func updateAlertAccentColor(_ accentColor: AlertColor) {
+        alertAccentColor = accentColor
+        alertNotificationService.accentColor = accentColor
+
+        if let data = try? JSONEncoder().encode(accentColor) {
+            userDefaults.set(data, forKey: Self.alertAccentColorDefaultsKey)
+        }
+    }
+
+    /// 특정 스킬의 알림 색상을 별도 창에서 고른다. nil 색을 쓰는 스킬은 전역 색을 초기값으로 띄운다.
+    func beginSkillAlertColorSelection(id: SkillTimer.ID) {
+        guard let timer = skillTimers.first(where: { $0.id == id }) else {
+            return
+        }
+
+        alertNotificationService.beginAccentColorSelection(
+            initialColor: timer.alertColor ?? alertAccentColor
+        ) { [weak self] color in
+            self?.updateTimer(id: id) { $0.alertColor = color }
+        }
+    }
+
+    /// 스킬 색상을 전역 색상으로 되돌린다.
+    func resetSkillAlertColor(id: SkillTimer.ID) {
+        updateTimer(id: id) { $0.alertColor = nil }
     }
 
     func updateAlertVolume(_ volume: Double) {
@@ -330,6 +398,36 @@ final class SkillTimerStore: ObservableObject {
         }
 
         return placement
+    }
+
+    private static func loadAlertTargetDisplayID(from userDefaults: UserDefaults) -> CGDirectDisplayID {
+        guard userDefaults.object(forKey: alertTargetDisplayDefaultsKey) != nil else {
+            return AlertTargetDisplay.mainDisplayID
+        }
+
+        return CGDirectDisplayID(max(0, userDefaults.integer(forKey: alertTargetDisplayDefaultsKey)))
+    }
+
+    private static func loadAlertAccentColor(from userDefaults: UserDefaults) -> AlertColor {
+        guard
+            let data = userDefaults.data(forKey: alertAccentColorDefaultsKey),
+            let accentColor = try? JSONDecoder().decode(AlertColor.self, from: data)
+        else {
+            return .defaultValue
+        }
+
+        return accentColor
+    }
+
+    private static func loadAlertPresentationStyle(from userDefaults: UserDefaults) -> AlertPresentationStyle {
+        guard
+            let rawValue = userDefaults.string(forKey: alertPresentationStyleDefaultsKey),
+            let style = AlertPresentationStyle(rawValue: rawValue)
+        else {
+            return .defaultValue
+        }
+
+        return style
     }
 
     private static func loadAlertVolume(from userDefaults: UserDefaults) -> Double {
